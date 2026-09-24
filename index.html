@@ -1,0 +1,236 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Te Reo Manu</title>
+<meta name="description" content="Learn to speak the language of birds: a five-level game built on Xeno-Canto recordings of tūī and other Aotearoa birds.">
+<meta property="og:title" content="Te Reo Manu">
+<meta property="og:description" content="Learn to speak the language of birds: a five-level game built on Xeno-Canto recordings of tūī and other Aotearoa birds.">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Fraunces:ital,opsz,wght@0,9..144,400;0,9..144,500;0,9..144,600;0,9..144,700;0,9..144,900;1,9..144,400;1,9..144,600&family=Newsreader:ital,opsz,wght@0,6..72,400;0,6..72,500;0,6..72,600;1,6..72,400;1,6..72,500&family=Spline+Sans+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+:root{
+  --paper:#f3eee4; --paper-2:#ece4d4; --surface:#fffdf8; --surface-2:#faf6ed;
+  --ink:#211c16; --ink-soft:#675e4f; --ink-faint:#a99e89;
+  --rule:#e2d9c7; --rule-2:#cfc3aa;
+  --accent:#1f4257; --accent-2:#6b8f3a;
+  --pos:#357a5b; --neg:#bb4a33; --neu:#a4977c;
+  --tui:#5f7a3a; --bellbird:#2c6c8c; --kaka:#b04a3a; --kea:#b07d22;
+  --low:#5f7a3a; --harmonic:#2c6c8c; --high:#bb4a33; --trill:#7c5784; --rmnr:#b07d22;
+  --serif:'Newsreader',Georgia,serif;
+  --display:'Fraunces',Georgia,serif;
+  --mono:'Spline Sans Mono',ui-monospace,monospace;
+  --shadow:0 1px 1px rgba(33,28,22,.03),0 10px 30px -16px rgba(33,28,22,.22);
+  --shadow-lg:0 2px 4px rgba(33,28,22,.05),0 24px 60px -28px rgba(33,28,22,.32);
+  --maxw:1060px;
+}
+*{margin:0;padding:0;box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  font-family:var(--serif); background:var(--paper); color:var(--ink);
+  line-height:1.62; font-size:18px; font-weight:400;
+  -webkit-font-smoothing:antialiased; text-rendering:optimizeLegibility;
+  overflow-x:hidden;
+}
+body::before{
+  content:""; position:fixed; inset:0; z-index:0; pointer-events:none; opacity:.5;
+  background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='160' height='160'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' stitchTiles='stitch'/%3E%3CfeColorMatrix type='saturate' values='0'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)' opacity='0.035'/%3E%3C/svg%3E");
+  mix-blend-mode:multiply;
+}
+::selection{background:#d9c9a8;color:#221c14}
+a{color:var(--accent);text-underline-offset:2px;text-decoration-thickness:1px}
+a:hover{color:var(--accent-2)}
+.wrap{position:relative;z-index:1;max-width:var(--maxw);margin:0 auto;padding:0 1.6rem}
+
+/* ============ TE REO MANU GAME ============ */
+.game-header{text-align:center;margin-bottom:2rem}
+.game-header h2{font-family:var(--display);font-weight:600;font-size:2rem;color:var(--ink);margin-bottom:.3rem}
+.game-header .game-subtitle{font-family:var(--serif);font-size:1.05rem;color:var(--ink-soft);font-style:italic}
+.game-levels{display:flex;gap:.8rem;justify-content:center;flex-wrap:wrap;margin-bottom:2rem}
+.game-level-btn{
+  display:flex;flex-direction:column;align-items:center;gap:.3rem;
+  padding:1rem 1.2rem;border-radius:8px;border:1.5px solid var(--rule);
+  background:var(--surface);cursor:pointer;transition:all .2s ease;min-width:110px;
+  font-family:var(--mono);font-size:.72rem;letter-spacing:.04em;color:var(--ink-soft);
+}
+.game-level-btn:hover:not(.locked){transform:translateY(-2px);box-shadow:var(--shadow);border-color:var(--accent)}
+.game-level-btn.active{border-color:var(--accent);background:var(--accent);color:#fff}
+.game-level-btn.locked{opacity:.45;cursor:not-allowed}
+.game-level-btn .level-num{font-family:var(--display);font-size:1.3rem;font-weight:600;line-height:1}
+.game-level-btn .level-stars{font-size:.9rem;letter-spacing:.15em}
+.game-level-btn .level-name{font-size:.68rem;text-align:center;line-height:1.3}
+.game-area{max-width:640px;margin:0 auto}
+.game-question-card{
+  background:var(--surface);border:1px solid var(--rule);border-radius:8px;
+  padding:2rem;margin-bottom:1.2rem;box-shadow:var(--shadow);text-align:center;
+}
+.game-question-card .q-text{font-family:var(--display);font-size:1.25rem;font-weight:500;color:var(--ink);margin-bottom:1.2rem;line-height:1.4}
+.game-question-card .q-context{font-family:var(--serif);font-size:.92rem;color:var(--ink-soft);margin-bottom:1rem}
+.game-play-btn{
+  display:inline-flex;align-items:center;gap:.5rem;padding:.7rem 1.6rem;
+  border-radius:999px;border:1.5px solid var(--accent);background:var(--surface);
+  color:var(--accent);font-family:var(--mono);font-size:.82rem;cursor:pointer;
+  transition:all .18s ease;
+}
+.game-play-btn:hover{background:var(--accent);color:#fff}
+.game-play-btn svg{width:18px;height:18px;fill:currentColor}
+.game-options{display:flex;flex-direction:column;gap:.5rem;margin-bottom:1.2rem}
+.game-option{
+  display:flex;align-items:center;gap:.8rem;padding:.9rem 1.2rem;
+  border-radius:6px;border:1.5px solid var(--rule);background:var(--surface);
+  cursor:pointer;transition:all .15s ease;font-family:var(--serif);font-size:1rem;color:var(--ink);
+}
+.game-option:hover:not(.disabled){border-color:var(--accent);background:var(--surface-2)}
+.game-option.selected{border-color:var(--accent);background:var(--accent);color:#fff}
+.game-option.correct{border-color:var(--pos);background:#e8f5e9;color:var(--ink)}
+.game-option.wrong{border-color:var(--neg);background:#fbe9e7;color:var(--ink)}
+.game-option.disabled{cursor:default;opacity:.7}
+.game-option .opt-dot{width:10px;height:10px;border-radius:50%;border:1.5px solid var(--ink-faint);flex-shrink:0}
+.game-option.selected .opt-dot{background:#fff;border-color:#fff}
+.game-option.correct .opt-dot{background:var(--pos);border-color:var(--pos)}
+.game-option.wrong .opt-dot{background:var(--neg);border-color:var(--neg)}
+.game-submit-row{display:flex;justify-content:space-between;align-items:center}
+.game-submit-btn{
+  padding:.6rem 2rem;border-radius:999px;border:none;
+  background:var(--accent);color:#fff;font-family:var(--mono);font-size:.82rem;
+  cursor:pointer;transition:all .15s ease;letter-spacing:.04em;
+}
+.game-submit-btn:hover{background:var(--ink)}
+.game-submit-btn:disabled{opacity:.35;cursor:not-allowed}
+.game-progress-bar{flex:1;margin:0 1.2rem;height:6px;background:var(--rule);border-radius:3px;overflow:hidden}
+.game-progress-fill{height:100%;background:var(--accent-2);border-radius:3px;transition:width .3s ease}
+.game-progress-text{font-family:var(--mono);font-size:.72rem;color:var(--ink-faint);white-space:nowrap}
+.game-feedback{
+  padding:1rem 1.3rem;border-radius:6px;margin-bottom:1.2rem;
+  font-family:var(--serif);font-size:.92rem;line-height:1.5;display:none;
+}
+.game-feedback.correct{background:#e8f5e9;border:1px solid #a5d6a7;color:#2e7d32}
+.game-feedback.wrong{background:#fbe9e7;border:1px solid #ef9a9a;color:#c62828}
+.game-result{text-align:center;padding:2rem;display:none}
+.game-result h3{font-family:var(--display);font-size:1.6rem;font-weight:600;margin-bottom:.8rem}
+.game-result .stars{font-size:2.2rem;letter-spacing:.3em;margin-bottom:1rem}
+.game-result .stat-line{font-family:var(--mono);font-size:.82rem;color:var(--ink-soft);margin-bottom:.4rem}
+.game-next-btn{
+  display:inline-block;margin-top:1rem;padding:.6rem 2rem;border-radius:999px;border:none;
+  background:var(--accent-2);color:#fff;font-family:var(--mono);font-size:.82rem;cursor:pointer;
+}
+.game-next-btn:hover{background:var(--tui)}
+.game-intro{text-align:center;padding:1.5rem 0}
+.game-intro p{font-family:var(--serif);font-size:1rem;color:var(--ink-soft);max-width:50ch;margin:0 auto .8rem}
+.game-intro .start-btn{
+  display:inline-block;margin-top:1rem;padding:.7rem 2.5rem;border-radius:999px;border:none;
+  background:var(--tui);color:#fff;font-family:var(--mono);font-size:.88rem;cursor:pointer;
+  transition:all .18s;
+}
+.game-intro .start-btn:hover{background:var(--accent);transform:translateY(-1px)}
+/* Compose level (L4) drag tokens */
+.compose-bank{display:flex;flex-wrap:wrap;gap:.5rem;justify-content:center;margin-bottom:1rem}
+.compose-token{
+  padding:.5rem 1rem;border-radius:999px;border:1.5px solid var(--rule);
+  background:var(--surface);font-family:var(--mono);font-size:.78rem;cursor:grab;
+  transition:all .15s;user-select:none;
+}
+.compose-token:hover{border-color:var(--accent);background:var(--surface-2)}
+.compose-token[data-type="LF"]{border-color:var(--low);color:var(--low)}
+.compose-token[data-type="H"]{border-color:var(--harmonic);color:var(--harmonic)}
+.compose-token[data-type="HF"]{border-color:var(--high);color:var(--high)}
+.compose-token[data-type="T"]{border-color:var(--trill);color:var(--trill)}
+.compose-token[data-type="R"]{border-color:var(--rmnr);color:var(--rmnr)}
+.compose-sequence{
+  min-height:50px;border:2px dashed var(--rule);border-radius:8px;padding:.8rem;
+  display:flex;flex-wrap:wrap;gap:.4rem;justify-content:center;margin-bottom:1rem;
+  transition:border-color .2s;
+}
+.compose-sequence.over{border-color:var(--accent)}
+.compose-sequence .compose-token{cursor:pointer}
+.compose-score-bar{height:8px;background:var(--rule);border-radius:4px;overflow:hidden;margin-bottom:.5rem}
+.compose-score-fill{height:100%;border-radius:4px;transition:width .5s ease,background .3s}
+.game-note{font-family:var(--mono);font-size:.68rem;color:var(--ink-faint);text-align:center;margin-top:2rem;font-style:italic}
+
+/* ============ STANDALONE PAGE ============ */
+main.wrap{padding-top:3rem;padding-bottom:2rem}
+.game-header h1{font-family:var(--display);font-weight:600;font-size:2rem;color:var(--ink);margin-bottom:.3rem}
+.game-option:focus-visible,.game-level-btn:focus-visible,.compose-token:focus-visible,
+button:focus-visible,a:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+.credits{position:relative;z-index:1;max-width:640px;margin:2.5rem auto 0;padding:1.4rem 0 2.5rem;
+  border-top:1px solid var(--rule);font-family:var(--mono);font-size:.68rem;line-height:1.7;color:var(--ink-soft)}
+.credits h2{font-family:var(--mono);font-size:.7rem;font-weight:600;letter-spacing:.14em;text-transform:uppercase;color:var(--accent-2);margin-bottom:.6rem}
+.credits ul{list-style:none;margin:0 0 .9rem}
+.credits li{margin-bottom:.25rem;overflow-wrap:anywhere}
+.credits p{margin-bottom:.6rem}
+@media (max-width:760px){
+  body{font-size:17px}
+  .wrap{padding:0 16px}
+  main.wrap{padding-top:2rem}
+  .game-question-card{padding:1.3rem 1rem}
+  .game-levels{gap:.5rem}
+  .game-level-btn{min-width:96px;padding:.8rem .7rem}
+  .game-progress-bar{margin:0 .7rem}
+  .game-submit-btn{padding:.6rem 1.3rem}
+  .game-next-btn{padding:.6rem 1.4rem}
+  .credits{margin-left:16px;margin-right:16px}
+}
+@media (prefers-reduced-motion:reduce){
+  *{animation:none!important;transition:none!important}
+}
+</style>
+</head>
+<body>
+<main class="wrap">
+  <div id="game">
+    <div class="game-header">
+      <h1>Te Reo Manu</h1>
+      <div class="game-subtitle">Learn to speak the language of birds</div>
+    </div>
+
+    <div class="game-levels" id="game-levels">
+      <!-- Populated by JS -->
+    </div>
+
+    <div class="game-area" id="game-area">
+      <div class="game-intro" id="game-intro">
+        <p>Aotearoa's birds each sing their own language. The tūī is the most complex vocalist — 36,268 syllables across five types, combined in patterns that are 44.2% predictable (v2 classifier; not directly comparable to prior estimates — see <a href="https://cyborg.garden/open-science/experiments/nz-birdsong/">Methodology</a>).</p>
+        <p>Can you learn to read the language of birds?</p>
+        <button class="start-btn" onclick="GameEngine.startLevel(1)">Begin · Level 1</button>
+      </div>
+      <div id="game-question" class="game-question-card" style="display:none">
+        <div class="q-text" id="q-text"></div>
+        <div class="q-context" id="q-context"></div>
+        <div id="q-audio"></div>
+      </div>
+      <div id="game-options" class="game-options" style="display:none"></div>
+      <div id="game-feedback" class="game-feedback"></div>
+      <div class="game-submit-row" id="game-submit-row" style="display:none">
+        <span class="game-progress-text" id="game-progress"></span>
+        <div class="game-progress-bar"><div class="game-progress-fill" id="game-progress-fill"></div></div>
+        <button class="game-submit-btn" id="game-submit" disabled onclick="GameEngine.submit()">Check</button>
+      </div>
+      <div id="game-score" class="game-result"></div>
+    </div>
+
+    <div class="game-note">Te reo Māori translations are interpretive, not standardised ornithological terminology. Data from 232 A-quality Xeno-Canto tūī recordings.</div>
+  </div>
+</main>
+
+<footer class="credits">
+  <h2>Recordings</h2>
+  <p>Level 1 clips are Xeno-Canto recordings. Each recording's licence is shown on its Xeno-Canto page.</p>
+  <ul>
+    <li><a href="https://xeno-canto.org/1104055">XC1104055</a> · Tūī · © Ken George · <a href="https://creativecommons.org/licenses/by-nc-sa/4.0/">CC BY-NC-SA 4.0</a></li>
+    <li><a href="https://xeno-canto.org/956962">XC956962</a> · recordist and licence on Xeno-Canto</li>
+    <li><a href="https://xeno-canto.org/152939">XC152939</a> · Korimako (New Zealand Bellbird) · © Fernand DEROUSSEN</li>
+    <li><a href="https://xeno-canto.org/326938">XC326938</a> · Kākā · © Pieter de Groot Boersma</li>
+    <li><a href="https://xeno-canto.org/405529">XC405529</a> · Kea · © Romuald Mikusek</li>
+    <li><a href="https://xeno-canto.org/33770">XC33770</a> · Morepork (Ruru) · © Patrik Åberg</li>
+    <li><a href="https://xeno-canto.org/984431">XC984431</a> · Fantail (Pīwakawaka) · © David Boyle</li>
+    <li><a href="https://xeno-canto.org/153000">XC153000</a> · Grey Warbler (Riroriro) · © Fernand DEROUSSEN</li>
+  </ul>
+  <p>The syllable samples and spectrograms in levels 2 and 3 are short excerpts cut from the A-quality Xeno-Canto tūī recordings analysed in the research.</p>
+  <p>Part of <a href="https://cyborg.garden/open-science/experiments/nz-birdsong/">Aotearoa Birdsong, Decoded</a>, the full research page. Data: <a href="https://xeno-canto.org">Xeno-Canto</a>.</p>
+</footer>
+
+<script src="game.js"></script>
+</body>
+</html>
