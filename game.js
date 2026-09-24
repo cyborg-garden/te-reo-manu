@@ -43,7 +43,7 @@ const GAME_DATA = {
     "Hawke's Bay":{H:1.40,recordings:4, syllables:1158, type_pcts:{LF:69.9,H:19.1,HF:1.7,R:5.4,T:3.9}}
   },
   level_config: [
-    {name:'Ko Wai?',    mi:'Who Is This?',       total:8,  pass:6,  desc:'Recognise the tūī among NZ birds'},
+    {name:'Ko Wai?',    mi:'Who Is This?',       total:7,  pass:5,  desc:'Recognise the tūī among NZ birds'},
     {name:'Ngā Oro',    mi:'The Sounds',        total:15, pass:12, desc:'Identify the five syllable types by ear'},
     {name:'E Whai Ake', mi:'What Comes Next?',   total:15, pass:8,  desc:'Predict tūī song transitions'},
     {name:'Waiata',     mi:'Compose the Song',   total:6,  pass:3,  desc:'Build a plausible tūī phrase'},
@@ -95,7 +95,8 @@ const GameEngine = {
       const n = i + 1;
       const unlocked = this.isLevelUnlocked(n);
       const data = this.progress.levels[n];
-      const stars = data ? '⭐'.repeat(data.stars) + '☆'.repeat(3 - data.stars) : '☆☆☆';
+      const nStars = data ? Math.max(0, Math.min(3, data.stars | 0)) : 0;
+      const stars = data ? "⭐".repeat(nStars) + "☆".repeat(3 - nStars) : "☆☆☆";
       const cls = unlocked ? '' : ' locked';
       const active = this.state.level === n ? ' active' : '';
       return `<div class="game-level-btn${cls}${active}" onclick="GameEngine.selectLevel(${n})" title="${lvl.desc}">
@@ -290,8 +291,8 @@ const GameEngine = {
     document.getElementById('game-options').style.display = 'block';
     document.getElementById('game-options').innerHTML = `
       <div style="margin-bottom:1rem">${barHtml('Region A', d1)}${barHtml('Region B', d2)}</div>
-      <div class="game-option" onclick="GameEngine.selectOpt(this,'${r1}')" data-value="${r1}"><span class="opt-dot"></span> Region A is more diverse</div>
-      <div class="game-option" onclick="GameEngine.selectOpt(this,'${r2}')" data-value="${r2}"><span class="opt-dot"></span> Region B is more diverse</div>`;
+      <div class="game-option" onclick="GameEngine.selectOpt(this,this.dataset.value)" data-value="${r1.replace(/"/g,'&quot;')}"><span class="opt-dot"></span> Region A is more diverse</div>
+      <div class="game-option" onclick="GameEngine.selectOpt(this,this.dataset.value)" data-value="${r2.replace(/"/g,'&quot;')}"><span class="opt-dot"></span> Region B is more diverse</div>`;
     document.getElementById('game-submit').disabled = true;
   },
 
@@ -300,7 +301,7 @@ const GameEngine = {
     container.innerHTML = options.map(opt => {
       let label = opt.label;
       if (hideProbs) label = label.replace(/\s*\(\d+% chance\)/, '');
-      return `<div class="game-option" onclick="GameEngine.selectOpt(this,'${opt.value}')" data-value="${opt.value}"><span class="opt-dot"></span> ${label}</div>`;
+      return `<div class="game-option" onclick="GameEngine.selectOpt(this,this.dataset.value)" data-value="${String(opt.value).replace(/"/g,'&quot;')}"><span class="opt-dot"></span> ${label}</div>`;
     }).join('');
   },
 
@@ -386,8 +387,12 @@ const GameEngine = {
       const selectedProb = q.probs[this.state.selected] || 0;
       const bestProb = sorted[0][1];
       // Weighted scoring: best=3, second=1, else=0
-      if (this.state.selected === sorted[0][0]) this.state.score += 3;
-      else if (this.state.selected === sorted[1][0]) this.state.score += 1;
+      // Score only the first pick per question, so a retry can't push past full marks.
+      if (!this.state.scoredQ) {
+        if (this.state.selected === sorted[0][0]) this.state.score += 3;
+        else if (this.state.selected === sorted[1][0]) this.state.score += 1;
+        this.state.scoredQ = true;
+      }
       feedbackText = correct
         ? `Correct! ${GAME_DATA.syllable_names[bestAnswer].en} follows with ${(bestProb * 100).toFixed(0)}% probability.`
         : `The most likely next syllable is ${GAME_DATA.syllable_names[bestAnswer].en} (${(bestProb * 100).toFixed(0)}%). You picked ${GAME_DATA.syllable_names[this.state.selected].en} (${(selectedProb * 100).toFixed(0)}%).`;
@@ -462,6 +467,7 @@ const GameEngine = {
       return;
     }
     this.state.qIndex++;
+    this.state.scoredQ = false;
     if (this.state.qIndex >= this.state.questions.length) {
       this.showResult();
     } else {

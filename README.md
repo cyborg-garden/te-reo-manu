@@ -30,7 +30,7 @@ then open http://localhost:8000/. Progress is saved in the browser
 
 - `index.html` — page and styles
 - `game.js` — the game (levels, questions, scoring)
-- `audio/` — eight Xeno-Canto clips used in level 1
+- `audio/` — seven Xeno-Canto clips used in level 1
 - `samples/` — syllable excerpts (`.wav`) and their spectrograms (`.png`) for levels 2 and 3
 - `meta.json` — arcade card and publish status
 
