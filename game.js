@@ -17,7 +17,7 @@ const GAME_DATA = {
     low_frequency: [0,1,2], harmonic: [0,1,2], high_frequency: [0,1,2], trill: [0,1,2], rmnr: [0,1,2]
   },
   species_clips: {
-    tui: ['1104055','956962'],
+    tui: ['1104055'],
     bellbird: ['152939'],
     kaka: ['326938'],
     kea: ['405529'],
