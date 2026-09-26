@@ -35,8 +35,11 @@ then open http://localhost:8000/. Progress is saved in the browser
   off a Waiata phrase (otherwise it jumps to the level row).
 - **Gamepad** — d-pad or left stick moves, A chooses, B goes back (same as
   Backspace). On the xbox50 console (`/cart/…`) the game does not read the
-  gamepad itself; the console shell turns the stick into arrow keys and the
-  button into Enter.
+  gamepad itself; the console shell turns the stick into arrow keys, a tap of
+  the button into Enter and a half-second hold into Backspace (back). Holding
+  it about 3 s leaves the game without pressing anything.
+- On the website the arrows and Space scroll the page as usual until you use
+  them on the game (Tab into it, or click it).
 
 ## Files
 

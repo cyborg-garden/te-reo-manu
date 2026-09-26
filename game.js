@@ -581,6 +581,7 @@ GameEngine.init();
   const optsEl = document.getElementById('game-options');
   const scoreEl = document.getElementById('game-score');
   const submitEl = document.getElementById('game-submit');
+  const fbEl = document.getElementById('game-feedback');
   // On the xbox50 console the shell owns the gamepad and sends us keys.
   const ON_CONSOLE = location.pathname.startsWith('/cart/');
   const DIRS = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right' };
@@ -717,26 +718,47 @@ GameEngine.init();
     const fresh = records.some(r => r.target === optsEl || r.target === scoreEl);
     if (fresh) setFocus(defaultTarget());
     else if (!visible(current)) setFocus(nearestTo(lastRect) || defaultTarget());
+    // Check's feedback box lands above the button and pushes Next off screen;
+    // bring the ring back into view.
+    else if (records.some(r => fbEl.contains(r.target))) setFocus(current);
   }).observe(area, { childList: true, subtree: true });
   mark();
+  // The feedback's spectrogram grows the box again once it has loaded.
+  area.addEventListener('load', e => {
+    if (navMode && e.target.tagName === 'IMG' && fbEl.contains(e.target) && visible(current)) setFocus(current);
+  }, true);
+
+  // Off the console, the arrows and Space scroll the page as usual until the
+  // player has engaged the game: focus inside it, or already steering.
+  const engaged = t => ON_CONSOLE || navMode || (t && t !== document.body && t !== document.documentElement && area.contains(t));
 
   window.addEventListener('keydown', e => {
     if (e.altKey || e.ctrlKey || e.metaKey) return;
     const dir = DIRS[e.key];
     if (dir) {
-      if (navigate(dir)) e.preventDefault();
+      if (engaged(e.target) && navigate(dir)) e.preventDefault();
       return;
     }
     if (e.key === 'Enter' || e.key === ' ') {
       const t = e.target;
-      // Only keys aimed at the game, or at nothing in particular (the page
-      // body, which is where the console's keys land before anything has focus).
-      const ours = t === document.body || t === document.documentElement || t === document || (t.closest && t.closest(NAV) && area.contains(t));
-      if (!ours) return;
+      const inGame = t.closest && t.closest(NAV) && area.contains(t);
+      if (inGame) {
+        e.preventDefault();
+        if (e.repeat) return;
+        current = t.closest(NAV);
+        activate();
+        return;
+      }
+      // A key aimed at nothing in particular (the page body, where the
+      // console's keys land before anything has focus). Only act on it while
+      // steering; otherwise just show the ring, and never click whatever the
+      // mouse last touched.
+      const onBody = t === document.body || t === document.documentElement || t === document;
+      if (!onBody || !engaged(t)) return;
       e.preventDefault();
       if (e.repeat) return;
-      if (t.closest && t.closest(NAV)) current = t.closest(NAV);
-      activate();
+      if (navMode) activate();
+      else { navMode = true; setFocus(defaultTarget()); }
       return;
     }
     if (e.key === 'Backspace' && navMode) { e.preventDefault(); back(); }
