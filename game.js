@@ -569,23 +569,237 @@ const GameEngine = {
 // Here it is the whole page, so it initialises on load.
 GameEngine.init();
 
-// Keyboard support. The engine renders options, level buttons and compose
-// tokens as clickable <div>s; make each one focusable and let Enter/Space
-// activate it, without touching the engine itself.
+// Keyboard and controller support. The engine renders options, level buttons
+// and compose tokens as clickable <div>s; make each one focusable, let the
+// arrow keys move a focus ring between whatever is on screen (nearest element
+// in that direction), and let Enter/Space activate it, without touching the
+// engine itself. A gamepad drives the same navigation on the website.
 (function () {
   const SEL = '.game-option, .game-level-btn, .compose-token';
+  const NAV = SEL + ', #game button';
   const area = document.getElementById('game');
+  const optsEl = document.getElementById('game-options');
+  const scoreEl = document.getElementById('game-score');
+  const submitEl = document.getElementById('game-submit');
+  // On the xbox50 console the shell owns the gamepad and sends us keys.
+  const ON_CONSOLE = location.pathname.startsWith('/cart/');
+  const DIRS = { ArrowUp: 'up', ArrowDown: 'down', ArrowLeft: 'left', ArrowRight: 'right' };
+
+  // navMode: the player is steering with keys or a pad, so keep a ring on
+  // screen and put focus somewhere useful after every render. A real mouse
+  // or finger turns it off again.
+  let navMode = ON_CONSOLE;
+  let current = null;
+  let lastRect = null;
+
   const mark = () => area.querySelectorAll(SEL).forEach(el => {
     if (!el.hasAttribute('tabindex')) { el.setAttribute('tabindex', '0'); el.setAttribute('role', 'button'); }
     if (el.classList.contains('game-level-btn')) el.setAttribute('aria-disabled', el.classList.contains('locked') ? 'true' : 'false');
   });
-  new MutationObserver(mark).observe(area, { childList: true, subtree: true });
-  mark();
-  area.addEventListener('keydown', e => {
-    if (e.key !== 'Enter' && e.key !== ' ') return;
-    const el = e.target.closest && e.target.closest(SEL);
-    if (!el || el !== e.target) return;
-    e.preventDefault();
+
+  const usable = el => el && el.isConnected && area.contains(el) &&
+    el.getClientRects().length > 0 && getComputedStyle(el).visibility !== 'hidden' &&
+    !el.disabled && !el.classList.contains('locked') && !el.classList.contains('disabled');
+  const targets = () => Array.from(area.querySelectorAll(NAV)).filter(usable);
+  const visible = el => el && usable(el);
+
+  // Where focus should land when a screen or question appears.
+  function defaultTarget() {
+    if (scoreEl.style.display !== 'none' && scoreEl.innerHTML.trim()) {
+      const btns = Array.from(scoreEl.querySelectorAll('button')).filter(usable);
+      if (btns.length) return btns[btns.length - 1];   // "Level n →" when there is one
+    }
+    const start = area.querySelector('#game-intro .start-btn');
+    if (visible(start)) return start;
+    if (visible(submitEl) && (GameEngine.state.answered || !submitEl.disabled)) return submitEl;
+    return [area.querySelector('#compose-bank .compose-token'), area.querySelector('#q-audio button'),
+      optsEl.querySelector('.game-option')].find(visible) || targets()[0] || null;
+  }
+
+  function setFocus(el) {
+    if (!el) return;
+    if (current && current !== el) current.classList.remove('pad-focus');
+    current = el;
+    lastRect = el.getBoundingClientRect();
+    if (navMode) el.classList.add('pad-focus');
+    try { el.focus({ preventScroll: true }); } catch (e) { el.focus(); }
+    if (navMode) {
+      const r = el.getBoundingClientRect();
+      const m = 80;   // clear of the xbox50 shell's hint pill at the bottom
+      if (r.top < m || r.bottom > window.innerHeight - m) el.scrollIntoView({ block: 'center', inline: 'nearest' });
+    }
+  }
+
+  function nearestTo(rect) {
+    if (!rect) return null;
+    const cx = rect.left + rect.width / 2, cy = rect.top + rect.height / 2;
+    let best = null, bestD = Infinity;
+    for (const el of targets()) {
+      const r = el.getBoundingClientRect();
+      const d = Math.hypot(r.left + r.width / 2 - cx, r.top + r.height / 2 - cy);
+      if (d < bestD) { bestD = d; best = el; }
+    }
+    return best;
+  }
+
+  // Spatial step: among elements whose centre lies in that direction, take
+  // the one with the smallest gap, strongly preferring ones in the same
+  // column. Left/right only ever moves along the current row.
+  function step(dir) {
+    const from = current.getBoundingClientRect();
+    const fx = from.left + from.width / 2, fy = from.top + from.height / 2;
+    const vertical = dir === 'up' || dir === 'down';
+    let best = null, bestScore = Infinity;
+    for (const el of targets()) {
+      if (el === current) continue;
+      const r = el.getBoundingClientRect();
+      const cx = r.left + r.width / 2, cy = r.top + r.height / 2;
+      let primary, ortho, off;
+      if (vertical) {
+        if (dir === 'down' ? cy <= fy + 1 : cy >= fy - 1) continue;
+        primary = Math.max(0, dir === 'down' ? r.top - from.bottom : from.top - r.bottom);
+        ortho = Math.max(0, r.left - from.right, from.left - r.right);
+        off = Math.abs(cx - fx);
+      } else {
+        if (dir === 'right' ? cx <= fx + 1 : cx >= fx - 1) continue;
+        primary = Math.max(0, dir === 'right' ? r.left - from.right : from.left - r.right);
+        ortho = Math.max(0, r.top - from.bottom, from.top - r.bottom);
+        if (ortho > 0) continue;   // left/right stays on the same row
+        off = Math.abs(cy - fy);
+      }
+      const score = primary + ortho * 3 + off * 0.1;
+      if (score < bestScore) { bestScore = score; best = el; }
+    }
+    return best;
+  }
+
+  // Returns true when the key was ours.
+  function navigate(dir) {
+    const wasNav = navMode;
+    navMode = true;
+    if (!visible(current)) { const d = defaultTarget(); if (d) { setFocus(d); return true; } return false; }
+    if (!wasNav) { setFocus(current); return true; }   // first key press just shows the ring
+    const next = step(dir);
+    if (!next) return false;
+    setFocus(next);
+    return true;
+  }
+
+  function activate() {
+    navMode = true;
+    const el = visible(current) ? current : null;
+    if (!el) { setFocus(defaultTarget()); return; }
+    const wasOption = el.classList.contains('game-option');
+    const wasToken = el.classList.contains('compose-token');
     el.click();
+    // Picking an answer (or filling the phrase) hands focus to Check, so a
+    // pad plays as: choose, Check, Next.
+    if ((wasOption || wasToken) && !GameEngine.state.answered && !submitEl.disabled && visible(submitEl)) setFocus(submitEl);
+  }
+
+  // Back: in Waiata take off the last token, otherwise jump to the level row.
+  function back() {
+    navMode = true;
+    const st = GameEngine.state;
+    if (area.querySelector('#compose-seq') && st.composing.length && !st.answered) {
+      GameEngine.removeToken(st.composing.length - 1);
+      return;
+    }
+    const lvl = area.querySelector('.game-level-btn.active') || area.querySelector('.game-level-btn:not(.locked)');
+    if (visible(lvl)) setFocus(lvl);
+  }
+
+  // After the engine re-renders: a new question or result screen resets focus
+  // to its default; anything else only repairs focus that was lost.
+  new MutationObserver(records => {
+    mark();
+    if (!navMode) return;
+    const fresh = records.some(r => r.target === optsEl || r.target === scoreEl);
+    if (fresh) setFocus(defaultTarget());
+    else if (!visible(current)) setFocus(nearestTo(lastRect) || defaultTarget());
+  }).observe(area, { childList: true, subtree: true });
+  mark();
+
+  window.addEventListener('keydown', e => {
+    if (e.altKey || e.ctrlKey || e.metaKey) return;
+    const dir = DIRS[e.key];
+    if (dir) {
+      if (navigate(dir)) e.preventDefault();
+      return;
+    }
+    if (e.key === 'Enter' || e.key === ' ') {
+      const t = e.target;
+      // Only keys aimed at the game, or at nothing in particular (the page
+      // body, which is where the console's keys land before anything has focus).
+      const ours = t === document.body || t === document.documentElement || t === document || (t.closest && t.closest(NAV) && area.contains(t));
+      if (!ours) return;
+      e.preventDefault();
+      if (e.repeat) return;
+      if (t.closest && t.closest(NAV)) current = t.closest(NAV);
+      activate();
+      return;
+    }
+    if (e.key === 'Backspace' && navMode) { e.preventDefault(); back(); }
   });
+  // Space on a native <button> clicks on keyup; we already clicked on keydown.
+  window.addEventListener('keyup', e => {
+    if (e.key === ' ' && e.target.closest && e.target.closest('#game button')) e.preventDefault();
+  });
+
+  window.addEventListener('pointerdown', () => {
+    navMode = false;
+    if (current) current.classList.remove('pad-focus');
+  }, true);
+  area.addEventListener('focusin', e => {
+    const el = e.target.closest && e.target.closest(NAV);
+    if (el && el !== current) { if (current) current.classList.remove('pad-focus'); current = el; lastRect = el.getBoundingClientRect(); if (navMode) el.classList.add('pad-focus'); }
+  });
+
+  if (ON_CONSOLE) setFocus(defaultTarget());
+
+  // ---- Gamepad (website only) ----
+  // D-pad or left stick moves, A (button 0) chooses, B (button 1) goes back.
+  // Holding a direction repeats. Off on the console, where the shell reads
+  // the pad and would otherwise double every press.
+  if (ON_CONSOLE || !navigator.getGamepads) return;
+  const DEAD = 0.5, REPEAT_DELAY = 400, REPEAT_RATE = 150;
+  const held = {};
+  let polling = false;
+
+  function edge(name, down, now, fn, repeat) {
+    const h = held[name];
+    if (down && !h) { held[name] = now + REPEAT_DELAY; fn(); }
+    else if (down && repeat && now >= h) { held[name] = now + REPEAT_RATE; fn(); }
+    else if (!down) held[name] = 0;
+  }
+
+  function poll() {
+    const pads = Array.from(navigator.getGamepads()).filter(Boolean);
+    if (!pads.length) { polling = false; return; }
+    const now = performance.now();
+    if (!document.hidden) {
+      let up = false, down = false, left = false, right = false, a = false, b = false;
+      for (const p of pads) {
+        const btn = i => !!(p.buttons[i] && p.buttons[i].pressed);
+        const x = p.axes[0] || 0, y = p.axes[1] || 0;
+        up = up || btn(12) || y < -DEAD;
+        down = down || btn(13) || y > DEAD;
+        left = left || btn(14) || x < -DEAD;
+        right = right || btn(15) || x > DEAD;
+        a = a || btn(0);
+        b = b || btn(1);
+      }
+      const go = dir => () => navigate(dir);
+      edge('up', up, now, go('up'), true);
+      edge('down', down, now, go('down'), true);
+      edge('left', left, now, go('left'), true);
+      edge('right', right, now, go('right'), true);
+      edge('a', a, now, activate, false);
+      edge('b', b, now, back, false);
+    }
+    requestAnimationFrame(poll);
+  }
+  function startPolling() { if (!polling) { polling = true; requestAnimationFrame(poll); } }
+  window.addEventListener('gamepadconnected', startPolling);
+  if (Array.from(navigator.getGamepads()).some(Boolean)) startPolling();
 })();

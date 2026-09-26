@@ -26,6 +26,18 @@ Static files, no build, no dependencies:
 then open http://localhost:8000/. Progress is saved in the browser
 (`localStorage`, key `reo-manu-progress`).
 
+## Controls
+
+- **Mouse / touch** — click or tap.
+- **Keyboard** — arrow keys move the focus ring to the nearest choice in that
+  direction; Enter or Space chooses. Choosing an answer moves the ring to
+  Check, so it plays as choose, Enter, Enter. Backspace takes the last token
+  off a Waiata phrase (otherwise it jumps to the level row).
+- **Gamepad** — d-pad or left stick moves, A chooses, B goes back (same as
+  Backspace). On the xbox50 console (`/cart/…`) the game does not read the
+  gamepad itself; the console shell turns the stick into arrow keys and the
+  button into Enter.
+
 ## Files
 
 - `index.html` — page and styles
