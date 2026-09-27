@@ -342,14 +342,22 @@ const GameEngine = {
   },
 
   playAudio(src, btn) {
+    // Remember each button's resting label once, so a second tap mid-clip
+    // does not save "Playing…" as the label to come back to.
+    if (!btn.dataset.label) btn.dataset.label = btn.innerHTML;
     if (this._audio) { this._audio.pause(); this._audio = null; }
+    if (this._audioBtn && this._audioBtn.dataset.label) this._audioBtn.innerHTML = this._audioBtn.dataset.label;
     const audio = new Audio(src);
     this._audio = audio;
-    const origHTML = btn.innerHTML;
-    btn.innerHTML = btn.innerHTML.replace('Play', 'Playing…').replace('Hear ', 'Playing ');
-    audio.addEventListener('ended', () => { btn.innerHTML = origHTML; this._audio = null; });
-    audio.addEventListener('error', () => { btn.innerHTML = origHTML; this._audio = null; });
-    audio.play().catch(() => { btn.innerHTML = origHTML; });
+    this._audioBtn = btn;
+    const origHTML = btn.dataset.label;
+    btn.innerHTML = origHTML.replace('Play', 'Playing…').replace('Hear ', 'Playing ');
+    // Only the clip still playing may put its label back; a superseded clip
+    // (paused above) would otherwise reset the newer one's "Playing…".
+    const done = () => { if (this._audio !== audio) return; btn.innerHTML = origHTML; this._audio = null; this._audioBtn = null; };
+    audio.addEventListener('ended', done);
+    audio.addEventListener('error', done);
+    audio.play().catch(done);
   },
 
   // ---- Submit answer ----
@@ -644,13 +652,13 @@ GameEngine.init();
   }
 
   // Spatial step: among elements whose centre lies in that direction, take
-  // the one with the smallest gap, strongly preferring ones in the same
-  // column. Left/right only ever moves along the current row.
+  // the nearest. Left/right only ever moves along the current row.
   function step(dir) {
     const from = current.getBoundingClientRect();
     const fx = from.left + from.width / 2, fy = from.top + from.height / 2;
     const vertical = dir === 'up' || dir === 'down';
     let best = null, bestScore = Infinity;
+    const cands = [];
     for (const el of targets()) {
       if (el === current) continue;
       const r = el.getBoundingClientRect();
@@ -668,10 +676,19 @@ GameEngine.init();
         if (ortho > 0) continue;   // left/right stays on the same row
         off = Math.abs(cy - fy);
       }
+      if (vertical) { cands.push({ el, r, primary, ortho, off, cy }); continue; }
       const score = primary + ortho * 3 + off * 0.1;
       if (score < bestScore) { bestScore = score; best = el; }
     }
-    return best;
+    if (!vertical || !cands.length) return best;
+    // Up/down goes to the nearest row first, then the closest thing in it,
+    // so a narrow centred button (Play) is not skipped for a full-width
+    // option further down that happens to overlap the current column.
+    cands.sort((a, b) => a.primary - b.primary || a.off - b.off);
+    const band = cands[0].r;
+    const row = cands.filter(c => c.cy >= band.top && c.cy <= band.bottom);
+    row.sort((a, b) => a.ortho - b.ortho || a.off - b.off);
+    return row[0].el;
   }
 
   // Returns true when the key was ours.
@@ -686,10 +703,23 @@ GameEngine.init();
     return true;
   }
 
+  // A level is being played (not finished, not on its result screen).
+  function midLevel() {
+    const st = GameEngine.state;
+    return st.level > 0 && st.questions.length > 0 && st.qIndex < st.questions.length && scoreEl.style.display !== 'block';
+  }
+
   function activate() {
     navMode = true;
     const el = visible(current) ? current : null;
     if (!el) { setFocus(defaultTarget()); return; }
+    // Choosing the level already being played would restart it and throw
+    // away the answers so far. From keys or a pad that is almost always one
+    // Back too many followed by A, so go back into the question instead.
+    if (el.classList.contains('game-level-btn') && el.classList.contains('active') && midLevel()) {
+      setFocus(defaultTarget());
+      return;
+    }
     const wasOption = el.classList.contains('game-option');
     const wasToken = el.classList.contains('compose-token');
     el.click();
@@ -699,16 +729,24 @@ GameEngine.init();
   }
 
   // Back: in Waiata take off the last token, otherwise jump to the level row.
+  // Choosing the level row's active button mid-level does not restart it
+  // (see activate), so no run of Back then A can wipe a level.
   function back() {
     navMode = true;
     const st = GameEngine.state;
+    const bank = area.querySelector('#compose-bank');
+    if (bank && !st.answered && !st.composing.length && visible(bank.querySelector('.compose-token'))) {
+      // An empty phrase has nothing to take off: stay in the bank.
+      if (!(visible(current) && bank.contains(current))) setFocus(bank.querySelector('.compose-token'));
+      else setFocus(current);
+      return;
+    }
     if (area.querySelector('#compose-seq') && st.composing.length && !st.answered) {
       const type = st.composing[st.composing.length - 1];
       GameEngine.removeToken(st.composing.length - 1);
       // Removing disables Check (and re-renders the phrase), so focus would
       // otherwise fall to the nearest placed token and the next A would
       // delete a second one. Go to the bank instead.
-      const bank = area.querySelector('#compose-bank');
       if (!(visible(current) && bank.contains(current))) {
         setFocus(bank.querySelector(`.compose-token[data-type="${type}"]`) || bank.querySelector('.compose-token'));
       }
@@ -737,8 +775,8 @@ GameEngine.init();
   }, true);
 
   // Off the console, the arrows and Space scroll the page as usual until the
-  // player has engaged the game: keyboard focus inside it (Tab), or already
-  // steering. Focus left behind by a mouse click does not count, so a mouse
+  // player has engaged the game: Enter, keyboard focus inside it (Tab), or
+  // already steering. Focus left behind by a mouse click does not count, so a mouse
   // player can still scroll with the arrows after clicking an answer.
   let pointerFocus = false;
   const engaged = t => ON_CONSOLE || navMode || (!pointerFocus && t && t !== document.body && t !== document.documentElement && area.contains(t));
@@ -748,7 +786,9 @@ GameEngine.init();
     if (e.altKey || e.ctrlKey || e.metaKey) return;
     const dir = DIRS[e.key];
     if (dir) {
-      if (engaged(e.target) && navigate(dir)) e.preventDefault();
+      // Once steering, the arrows belong to the game even when there is
+      // nothing further that way; otherwise they would scroll the page.
+      if (engaged(e.target)) { navigate(dir); e.preventDefault(); }
       return;
     }
     if (e.key === 'Enter' || e.key === ' ') {
@@ -762,11 +802,13 @@ GameEngine.init();
         return;
       }
       // A key aimed at nothing in particular (the page body, where the
-      // console's keys land before anything has focus). Only act on it while
-      // steering; otherwise just show the ring, and never click whatever the
-      // mouse last touched.
+      // console's keys land before anything has focus, or a fresh page).
+      // Enter always engages the game from here; Space only while steering,
+      // so a reader's Space still scrolls. When not yet steering this just
+      // shows the ring (on Begin, on a fresh page) and never clicks whatever
+      // the mouse last touched.
       const onBody = t === document.body || t === document.documentElement || t === document;
-      if (!onBody || !engaged(t)) return;
+      if (!onBody || !(e.key === 'Enter' || engaged(t))) return;
       e.preventDefault();
       if (e.repeat) return;
       if (navMode) activate();
