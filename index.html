@@ -58,6 +58,11 @@ a:hover{color:var(--accent-2)}
 .game-level-btn:hover:not(.locked){transform:translateY(-2px);box-shadow:var(--shadow);border-color:var(--accent)}
 .game-level-btn.active{border-color:var(--accent);background:var(--accent);color:#fff}
 .game-level-btn.locked{opacity:.45;cursor:not-allowed}
+/* Shown by key/pad play before leaving a level partway through. */
+.nav-leave-hint{max-width:34rem;margin:-1.2rem auto 1.6rem;padding:.6rem .9rem;border-radius:8px;
+  border:1.5px solid var(--kaka);font-family:var(--mono);font-size:.74rem;line-height:1.5;
+  color:var(--kaka);text-align:center}
+.nav-leave-hint[hidden]{display:none}
 .game-level-btn .level-num{font-family:var(--display);font-size:1.3rem;font-weight:600;line-height:1}
 .game-level-btn .level-stars{font-size:.9rem;letter-spacing:.15em}
 .game-level-btn .level-name{font-size:.68rem;text-align:center;line-height:1.3}

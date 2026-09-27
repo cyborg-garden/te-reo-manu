@@ -615,8 +615,13 @@ GameEngine.init();
   // Where focus should land when a screen or question appears.
   function defaultTarget() {
     if (scoreEl.style.display !== 'none' && scoreEl.innerHTML.trim()) {
-      const btns = Array.from(scoreEl.querySelectorAll('button')).filter(usable);
-      if (btns.length) return btns[btns.length - 1];   // "Level n →" when there is one
+      const next = Array.from(scoreEl.querySelectorAll('button')).filter(usable)
+        .find(b => !/^Retry/.test(b.textContent.trim()));
+      if (next) return next;   // "Level n →"
+      // The last level has no next button, only Retry; a stray A there would
+      // restart it. Rest the ring on the result itself, which A ignores.
+      if (!scoreEl.hasAttribute('tabindex')) scoreEl.setAttribute('tabindex', '-1');
+      return scoreEl;
     }
     const start = area.querySelector('#game-intro .start-btn');
     if (visible(start)) return start;
@@ -627,6 +632,7 @@ GameEngine.init();
 
   function setFocus(el) {
     if (!el) return;
+    if (armed && armed !== el) disarm();
     if (current && current !== el) current.classList.remove('pad-focus');
     current = el;
     lastRect = el.getBoundingClientRect();
@@ -697,8 +703,15 @@ GameEngine.init();
     navMode = true;
     if (!visible(current)) { const d = defaultTarget(); if (d) { setFocus(d); return true; } return false; }
     if (!wasNav) { setFocus(current); return true; }   // first key press just shows the ring
-    const next = step(dir);
+    let next = step(dir);
     if (!next) return false;
+    // Stepping into the level row from a question lands on the level being
+    // played, not whichever button happens to sit nearest.
+    const lvlBtn = el => el && el.classList.contains('game-level-btn');
+    if (lvlBtn(next) && !lvlBtn(current) && midLevel()) {
+      const act = area.querySelector('.game-level-btn.active');
+      if (visible(act)) next = act;
+    }
     setFocus(next);
     return true;
   }
@@ -709,20 +722,48 @@ GameEngine.init();
     return st.level > 0 && st.questions.length > 0 && st.qIndex < st.questions.length && scoreEl.style.display !== 'block';
   }
 
+  // Leaving a level partway through by key or pad takes two presses on the
+  // same level button, with a visible warning in between, so no stray
+  // choose (or double tap) can throw away a run.
+  let armed = null, armedAt = 0, hintEl = null;
+  function disarm() {
+    armed = null;
+    if (hintEl) hintEl.hidden = true;
+  }
+  function arm(el) {
+    armed = el; armedAt = performance.now();
+    if (!hintEl) {
+      hintEl = document.createElement('div');
+      hintEl.className = 'nav-leave-hint';
+      hintEl.setAttribute('role', 'status');
+      document.getElementById('game-levels').after(hintEl);
+    }
+    const st = GameEngine.state;
+    const n = el.querySelector('.level-num');
+    hintEl.textContent = `Level ${st.level} is in progress (${st.qIndex + 1}/${st.questions.length}). ` +
+      `Choose Level ${n ? n.textContent.trim() : ''} again to leave it and lose your answers, or move away to stay.`;
+    hintEl.hidden = false;
+  }
+
   function activate() {
     navMode = true;
     const el = visible(current) ? current : null;
     if (!el) { setFocus(defaultTarget()); return; }
-    // Choosing the level already being played would restart it and throw
-    // away the answers so far. From keys or a pad that is almost always one
-    // Back too many followed by A, so go back into the question instead.
-    if (el.classList.contains('game-level-btn') && el.classList.contains('active') && midLevel()) {
-      setFocus(defaultTarget());
-      return;
+    if (el.classList.contains('game-level-btn') && midLevel()) {
+      // Choosing the level already being played would restart it and throw
+      // away the answers so far. From keys or a pad that is almost always
+      // one Back too many followed by A, so go back into the question.
+      if (el.classList.contains('active')) { setFocus(defaultTarget()); return; }
+      // Any other level: the first choose only warns. A second one counts
+      // once the warning has been up long enough to read, not as the other
+      // half of a double tap.
+      if (armed !== el) { arm(el); return; }
+      if (performance.now() - armedAt < 600) return;
     }
     const wasOption = el.classList.contains('game-option');
     const wasToken = el.classList.contains('compose-token');
     el.click();
+    disarm();
     // Picking an answer (or filling the phrase) hands focus to Check, so a
     // pad plays as: choose, Check, Next.
     if ((wasOption || wasToken) && !GameEngine.state.answered && !submitEl.disabled && visible(submitEl)) setFocus(submitEl);
@@ -734,6 +775,9 @@ GameEngine.init();
   function back() {
     navMode = true;
     const st = GameEngine.state;
+    // Already on the level row: nothing further back, and in Waiata a token
+    // the player cannot see must not come off.
+    if (visible(current) && current.classList.contains('game-level-btn')) { setFocus(current); return; }
     const bank = area.querySelector('#compose-bank');
     if (bank && !st.answered && !st.composing.length && visible(bank.querySelector('.compose-token'))) {
       // An empty phrase has nothing to take off: stay in the bank.
@@ -776,10 +820,43 @@ GameEngine.init();
 
   // Off the console, the arrows and Space scroll the page as usual until the
   // player has engaged the game: Enter, keyboard focus inside it (Tab), or
-  // already steering. Focus left behind by a mouse click does not count, so a mouse
-  // player can still scroll with the arrows after clicking an answer.
+  // already steering. Focus left behind by a mouse click does not count, so
+  // a mouse player can still scroll with the arrows after clicking an answer.
   let pointerFocus = false;
+  let spaceOurs = false;
   const engaged = t => ON_CONSOLE || navMode || (!pointerFocus && t && t !== document.body && t !== document.documentElement && area.contains(t));
+
+  // The xbox50 shell sends one keydown per stick push and never repeats it,
+  // and a diagonal push arrives as two arrows in the same frame. Gather the
+  // arrows for a moment, take one step (up/down wins a diagonal: the game's
+  // lists run down the page), then repeat it while the stick stays held,
+  // like the website's own gamepad poll.
+  const COMBINE_MS = 30, REPEAT_DELAY = 400, REPEAT_RATE = 150;
+  const shellHeld = new Set();
+  let batch = null, batchTimer = 0, repeatKey = null, repeatTimer = 0;
+  function stopRepeat() { clearTimeout(repeatTimer); repeatKey = null; }
+  function shellArrow(key) {
+    shellHeld.add(key);
+    if (!batch) { batch = []; batchTimer = setTimeout(flushBatch, COMBINE_MS); }
+    batch.push(key);
+  }
+  function flushBatch() {
+    const keys = batch.filter(k => shellHeld.has(k));
+    batch = null;
+    if (!keys.length) return;
+    const key = keys.find(k => k === 'ArrowUp' || k === 'ArrowDown') || keys[0];
+    stopRepeat();
+    navigate(DIRS[key]);
+    repeatKey = key;
+    const again = delay => { repeatTimer = setTimeout(() => {
+      if (repeatKey !== key || !shellHeld.has(key) || document.hidden) return stopRepeat();
+      navigate(DIRS[key]); again(REPEAT_RATE);
+    }, delay); };
+    again(REPEAT_DELAY);
+  }
+  function releaseShell() { shellHeld.clear(); stopRepeat(); }
+  window.addEventListener('blur', releaseShell);
+  document.addEventListener('visibilitychange', () => { if (document.hidden) releaseShell(); });
 
   window.addEventListener('keydown', e => {
     if (e.key === 'Tab') pointerFocus = false;
@@ -788,14 +865,21 @@ GameEngine.init();
     if (dir) {
       // Once steering, the arrows belong to the game even when there is
       // nothing further that way; otherwise they would scroll the page.
-      if (engaged(e.target)) { navigate(dir); e.preventDefault(); }
+      if (!engaged(e.target)) return;
+      e.preventDefault();
+      if (ON_CONSOLE && !e.isTrusted) { if (!e.repeat && !shellHeld.has(e.key)) shellArrow(e.key); }
+      else navigate(dir);
       return;
     }
     if (e.key === 'Enter' || e.key === ' ') {
       const t = e.target;
       const inGame = t.closest && t.closest(NAV) && area.contains(t);
+      // Space on something the mouse last clicked is still the reader's
+      // Space (scroll, or a native button's own click), not a way in.
+      if (e.key === ' ' && pointerFocus && !navMode) return;
       if (inGame) {
         e.preventDefault();
+        if (e.key === ' ') spaceOurs = true;
         if (e.repeat) return;
         current = t.closest(NAV);
         activate();
@@ -819,11 +903,15 @@ GameEngine.init();
   });
   // Space on a native <button> clicks on keyup; we already clicked on keydown.
   window.addEventListener('keyup', e => {
-    if (e.key === ' ' && e.target.closest && e.target.closest('#game button')) e.preventDefault();
+    if (DIRS[e.key] && shellHeld.delete(e.key) && repeatKey === e.key) stopRepeat();
+    if (e.key !== ' ') return;
+    if (spaceOurs && e.target.closest && e.target.closest('#game button')) e.preventDefault();
+    spaceOurs = false;
   });
 
   window.addEventListener('pointerdown', () => {
     navMode = false;
+    disarm();
     pointerFocus = true;
     if (current) current.classList.remove('pad-focus');
   }, true);
@@ -839,7 +927,7 @@ GameEngine.init();
   // Holding a direction repeats. Off on the console, where the shell reads
   // the pad and would otherwise double every press.
   if (ON_CONSOLE || !navigator.getGamepads) return;
-  const DEAD = 0.5, REPEAT_DELAY = 400, REPEAT_RATE = 150;
+  const DEAD = 0.5;   // REPEAT_DELAY and REPEAT_RATE are shared with the shell repeat above
   const held = {};
   let polling = false;
 
