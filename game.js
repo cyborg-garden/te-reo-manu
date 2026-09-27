@@ -367,6 +367,10 @@ const GameEngine = {
     if (!q) return;
 
     this.state.answered = true;
+    // Only the first Check of a question can score: a wrong answer brings
+    // the same question back (Try Again), and the retry must not earn marks.
+    const firstTry = !this.state.scoredQ;
+    this.state.scoredQ = true;
     let correct = false;
     let feedbackText = '';
     const fb = document.getElementById('game-feedback');
@@ -378,7 +382,7 @@ const GameEngine = {
       feedbackText = correct
         ? `Correct! ${name.en} (${name.mi}) — ${name.desc}`
         : `That was ${name.en} (${name.mi}). ${name.desc}`;
-      if (correct) this.state.score++;
+      if (correct && firstTry) this.state.score++;
       // Show spectrogram
       feedbackText += `<div style="margin-top:.8rem"><img src="${q.spectrogram}" alt="Spectrogram" style="max-width:100%;border-radius:4px;border:1px solid var(--rule)"></div>`;
     } else if (q.type === 'species') {
@@ -387,7 +391,7 @@ const GameEngine = {
       feedbackText = correct
         ? `Correct! That was a ${names[q.species]}.`
         : `That was a ${names[q.species]}, not a ${names[this.state.selected]}.`;
-      if (correct) this.state.score++;
+      if (correct && firstTry) this.state.score++;
     } else if (q.type === 'transition') {
       const sorted = Object.entries(q.probs).sort((a, b) => b[1] - a[1]);
       const bestAnswer = sorted[0][0];
@@ -395,11 +399,9 @@ const GameEngine = {
       const selectedProb = q.probs[this.state.selected] || 0;
       const bestProb = sorted[0][1];
       // Weighted scoring: best=3, second=1, else=0
-      // Score only the first pick per question, so a retry can't push past full marks.
-      if (!this.state.scoredQ) {
+      if (firstTry) {
         if (this.state.selected === sorted[0][0]) this.state.score += 3;
         else if (this.state.selected === sorted[1][0]) this.state.score += 1;
-        this.state.scoredQ = true;
       }
       feedbackText = correct
         ? `Correct! ${GAME_DATA.syllable_names[bestAnswer].en} follows with ${(bestProb * 100).toFixed(0)}% probability.`
@@ -423,7 +425,7 @@ const GameEngine = {
       const randomBaseline = Math.pow(0.2, this.state.composing.length - 1);
       correct = prob > randomBaseline * 3;
       const pct = Math.min(100, (prob / (randomBaseline * 10)) * 100);
-      if (correct) this.state.score++;
+      if (correct && firstTry) this.state.score++;
       feedbackText = correct
         ? `Nice phrase! Naturalness score: ${pct.toFixed(0)}%. A tūī would find this plausible.`
         : `This sequence is quite unlikely for a tūī. Naturalness: ${pct.toFixed(0)}%. Tip: tūī songs are dominated by low-frequency runs (LF→LF has 73.3% probability).`;
@@ -434,7 +436,7 @@ const GameEngine = {
       const d2 = GAME_DATA.regional_diversity[r2];
       const moreDiv = d1.H >= d2.H ? r1 : r2;
       correct = this.state.selected === moreDiv;
-      if (correct) this.state.score++;
+      if (correct && firstTry) this.state.score++;
       feedbackText = correct
         ? `Correct! ${moreDiv} has Shannon diversity H = ${GAME_DATA.regional_diversity[moreDiv].H.toFixed(2)}, meaning a more even mix of syllable types.`
         : `Actually, ${moreDiv} is more diverse (H = ${GAME_DATA.regional_diversity[moreDiv].H.toFixed(2)}) vs ${this.state.selected} (H = ${GAME_DATA.regional_diversity[this.state.selected].H.toFixed(2)}).`;
@@ -845,7 +847,10 @@ GameEngine.init();
   // a mouse player can still scroll with the arrows after clicking an answer.
   let pointerFocus = false;
   let spaceOurs = false;
-  const engaged = t => ON_CONSOLE || navMode || (!pointerFocus && t && t !== document.body && t !== document.documentElement && area.contains(t));
+  // Keyboard focus on the rest of the page (a footer link, reached by Tab)
+  // belongs to the page: the arrows scroll and Backspace is left alone there.
+  const outside = t => !ON_CONSOLE && !!t && t.nodeType === 1 && t !== document.body && t !== document.documentElement && !area.contains(t);
+  const engaged = t => ON_CONSOLE || (!outside(t) && (navMode || (!pointerFocus && t && t !== document.body && t !== document.documentElement && area.contains(t))));
 
   // The xbox50 shell sends one keydown per stick push and never repeats it,
   // and a diagonal push arrives as two arrows in the same frame. Gather the
@@ -885,32 +890,57 @@ GameEngine.init();
   // The xbox50 shell sends a button's key when the button comes up. The
   // press that picked this game in the console's chooser can still be down
   // while the game loads, and its release would arrive here as a choose
-  // (or, held longer, a back) the player never meant. Watch the pad from
-  // load: if a button is already down, ignore the shell's choose/back until
-  // just after it comes up. If the pad is not visible to this page, fall
-  // back to ignoring them for the first moments after load.
-  const SHELL_SETTLE_MS = 1200;
-  let pickHeld = ON_CONSOLE ? null : false;   // null: not known yet
-  let pickUntil = 0;
-  function watchPick() {
-    const now = performance.now();
+  // (or, held longer, a back) the player never meant. The shell drops any
+  // release that comes 2.5 s or more after the game started, so only the
+  // first choose/back inside that window can be such a leftover.
+  //
+  // Where this page can see the pad, judge that first key against the pad's
+  // reading at load (only A and B, the buttons the shell treats as the
+  // click): if A/B now differ from that reading, the key is the pick press
+  // coming up and is ignored; if they are back where they were, it is a
+  // real tap. This holds for a homebrew stick that reads "pressed" at rest.
+  // A pad that only shows up later (the browser can hide a pad until a
+  // button is pressed on this page) was not holding anything at load, so
+  // there is no leftover to catch. Where the page never sees a pad (the
+  // Arduino stick reaches the shell over serial), there is no telling, so
+  // that first key is ignored.
+  const PICK_WINDOW_MS = 2700;   // the shell's 2.5 s hold-to-quit, plus slack
+  const PICK_SEEN_MS = 300;      // a pad seen this soon counts as there at load
+  const pickStart = performance.now();
+  let pickBase = null;           // A/B reading when the pad was first seen
+  let pickDone = !ON_CONSOLE;
+  function readPick() {
     let pads = [];
     try { pads = Array.from(navigator.getGamepads ? navigator.getGamepads() : []).filter(Boolean); } catch (e) {}
-    const down = pads.some(p => p.buttons.some(b => b && b.pressed));
-    if (pads.length && pickHeld === null) pickHeld = down;
-    else if (pickHeld && !down) { pickHeld = false; pickUntil = now + 300; }
-    if (pickHeld === null && now > SHELL_SETTLE_MS) pickHeld = false;
-    if (now > 3500) pickHeld = false;   // past the shell's hold-to-quit anyway
-    if (pickHeld !== false) requestAnimationFrame(watchPick);
+    if (!pads.length) return null;
+    const on = b => !!(b && b.pressed);
+    return pads.map(p => p.index + ':' + +on(p.buttons[0]) + +on(p.buttons[1])).join(' ');
+  }
+  function watchPick() {
+    if (pickDone || performance.now() > PICK_WINDOW_MS) return;
+    const seen = readPick();
+    if (seen !== null) {
+      if (performance.now() - pickStart <= PICK_SEEN_MS) pickBase = seen;
+      else pickDone = true;
+      return;
+    }
+    requestAnimationFrame(watchPick);
   }
   if (ON_CONSOLE) watchPick();
-  const pickPending = () => pickHeld !== false || performance.now() < pickUntil;
+  // Called for each choose/back the shell sends: true means ignore it.
+  function pickLeftover() {
+    if (pickDone) return false;
+    pickDone = true;
+    if (performance.now() > PICK_WINDOW_MS) return false;
+    if (pickBase === null) return true;
+    return readPick() !== pickBase;
+  }
 
   window.addEventListener('keydown', e => {
     if (e.key === 'Tab') pointerFocus = false;
     if (e.altKey || e.ctrlKey || e.metaKey) return;
-    if (ON_CONSOLE && !e.isTrusted && pickPending() &&
-        (e.key === 'Enter' || e.key === ' ' || e.key === 'Backspace')) { e.preventDefault(); return; }
+    if (ON_CONSOLE && !e.isTrusted && !e.repeat &&
+        (e.key === 'Enter' || e.key === ' ' || e.key === 'Backspace') && pickLeftover()) { e.preventDefault(); return; }
     const dir = DIRS[e.key];
     if (dir) {
       // Once steering, the arrows belong to the game even when there is
@@ -949,7 +979,8 @@ GameEngine.init();
       else { navMode = true; setFocus(defaultTarget()); }
       return;
     }
-    if (e.key === 'Backspace' && navMode) { e.preventDefault(); back(); }
+    // Held Backspace auto-repeats; one press takes off one token, like Enter.
+    if (e.key === 'Backspace' && navMode && !outside(e.target)) { e.preventDefault(); if (e.repeat) return; back(); }
   });
   // Space on a native <button> clicks on keyup; we already clicked on keydown.
   window.addEventListener('keyup', e => {
@@ -966,10 +997,18 @@ GameEngine.init();
     if (current) current.classList.remove('pad-focus');
   }, true);
   // Tab (or anything else) moving focus away cancels the leave warning too.
-  document.addEventListener('focusin', e => { if (armed && e.target !== armed) disarm(); });
+  // Focus leaving the game takes the ring with it, so there is never a
+  // second, stale ring; Tab back in (or an arrow once focus is on the page
+  // body again) puts it back.
+  document.addEventListener('focusin', e => {
+    if (armed && e.target !== armed) disarm();
+    if (outside(e.target) && current) current.classList.remove('pad-focus');
+  });
   area.addEventListener('focusin', e => {
     const el = e.target.closest && e.target.closest(NAV);
-    if (el && el !== current) { if (current) current.classList.remove('pad-focus'); current = el; lastRect = el.getBoundingClientRect(); if (navMode) el.classList.add('pad-focus'); }
+    if (!el) return;
+    if (el !== current) { if (current) current.classList.remove('pad-focus'); current = el; lastRect = el.getBoundingClientRect(); }
+    if (navMode) el.classList.add('pad-focus');
   });
 
   if (ON_CONSOLE) setFocus(defaultTarget());
@@ -1004,7 +1043,9 @@ GameEngine.init();
       let up = false, down = false, left = false, right = false, a = false, b = false;
       for (const p of pads) {
         const btn = i => !!(p.buttons[i] && p.buttons[i].pressed);
-        const x = p.axes[0] || 0, y = p.axes[1] || 0;
+        // The stick points one way only: whichever axis it leans on more.
+        let x = p.axes[0] || 0, y = p.axes[1] || 0;
+        if (Math.abs(x) > Math.abs(y)) y = 0; else x = 0;
         up = up || btn(12) || y < -DEAD;
         down = down || btn(13) || y > DEAD;
         left = left || btn(14) || x < -DEAD;
@@ -1012,6 +1053,9 @@ GameEngine.init();
         a = a || btn(0);
         b = b || btn(1);
       }
+      // A diagonal (two d-pad arrows, or two pads) is one step, and up/down
+      // wins, as with the console's stick: the game's lists run down the page.
+      if (up || down) left = right = false;
       const go = dir => () => navigate(dir);
       edge('up', up, now, go('up'), true);
       edge('down', down, now, go('down'), true);

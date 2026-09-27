@@ -34,7 +34,8 @@ then open http://localhost:8000/. Progress is saved in the browser
   Check, so it plays as choose, Enter, Enter. Backspace takes the last token
   off a Waiata phrase (only while the ring is in the phrase area, never from
   the level row); with nothing to take off it stays put, and on other screens
-  it jumps to the level row. Tab skips locked levels, and choosing a locked
+  it jumps to the level row. Holding Backspace down takes off one token, not
+  the whole phrase. Tab skips locked levels, and choosing a locked
   level does nothing.
 - **Leaving a level partway through** (keys or pad) — Up from a question lands
   on the level you are playing, and choosing it takes you back to your
@@ -46,7 +47,8 @@ then open http://localhost:8000/. Progress is saved in the browser
   level you just finished; it puts the ring back where it started. To play it
   again, choose Retry.
 - **Gamepad (website)** — d-pad or left stick moves (hold to repeat), A
-  chooses, B goes back (same as Backspace). The pad only steers while the
+  chooses, B goes back (same as Backspace). A diagonal is one step: the
+  stick counts only the way it leans most, and on the d-pad up/down wins. The pad only steers while the
   game's page has focus: where the game is embedded in another page, click
   into it first.
 - **xbox50 console** (`/cart/…`) — the game does not read the gamepad for
@@ -57,13 +59,25 @@ then open http://localhost:8000/. Progress is saved in the browser
   diagonal push is one step (up/down wins), and even a quick flick moves.
   If the press that picked the game in the console's menu is still held
   while it loads, its release is ignored, so it cannot start a level or jump
-  to the level row by itself.
+  to the level row by itself. The game checks this against the pad's A/B
+  reading at load, so a stick whose switch reads "pressed" at rest still
+  gets its first tap. When the game cannot see the pad at all (the Arduino
+  stick, which reaches the console over serial), it cannot tell a held pick
+  from a tap, so it ignores the first tap or hold in the first ~2.7 s after
+  it loads; after that every press counts.
 - On the website the arrows and Space scroll the page as usual until you
   engage the game with the keyboard: press Enter (the ring appears on Begin,
   or on the current question), or Tab into it. Clicking with the mouse does
   not take over the arrows, but Space still presses a button you just
   clicked (Check or Next, Play), as it does on any page. Once you are
-  steering, the arrows belong to the game.
+  steering, the arrows belong to the game, until you Tab out of it: then the
+  ring goes away and the arrows scroll the page again. Tab back in to steer.
+
+## Scoring
+
+Only your first Check on each question scores. A wrong answer shows Try
+Again so you can hear and see the right one, but the retry earns nothing, so
+stars reflect first tries.
 
 ## Files
 
