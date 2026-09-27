@@ -649,8 +649,26 @@ GameEngine.init();
     if (navMode) {
       const r = el.getBoundingClientRect();
       const m = 80;   // clear of the xbox50 shell's hint pill at the bottom
-      if (r.top < m || r.bottom > window.innerHeight - m) el.scrollIntoView({ block: 'center', inline: 'nearest' });
+      // Instant, not the page's smooth scroll: an animation still running
+      // when the next screen renders would carry the new ring off screen.
+      if (r.top < m || r.bottom > window.innerHeight - m) el.scrollIntoView({ block: 'center', inline: 'nearest', behavior: 'instant' });
     }
+  }
+
+  // After Check: show the verdict from its top, then bring the ring as far
+  // into view as that allows. Centring the button alone pushed a tall
+  // feedback box off the top, with no way to scroll back while steering.
+  function showFeedback() {
+    if (!visible(current)) return;
+    setFocus(current);
+    const m = 80;
+    const fb = fbEl.getBoundingClientRect();
+    const r = current.getBoundingClientRect();
+    let dy = 0;
+    if (r.bottom > window.innerHeight - m) dy = r.bottom - (window.innerHeight - m);
+    dy = Math.min(dy, fb.top - 8);
+    if (fb.top < 8) dy = fb.top - 8;
+    if (dy) window.scrollBy({ top: dy, behavior: 'instant' });
   }
 
   function nearestTo(rect) {
@@ -780,8 +798,19 @@ GameEngine.init();
     }
     const wasOption = el.classList.contains('game-option');
     const wasToken = el.classList.contains('compose-token');
+    const seq = area.querySelector('#compose-seq');
+    const placed = wasToken && seq && seq.contains(el) ? [...seq.children].indexOf(el) : -1;
     el.click();
     disarm();
+    // Taking a token off the phrase: stay in the phrase, or once it is empty
+    // go to the bank token of that type (as back() does), never whichever
+    // bank token sits nearest, which the next A would add unaimed.
+    if (placed >= 0) {
+      const left = seq.querySelectorAll('.compose-token');
+      setFocus(left[Math.min(placed, left.length - 1)] ||
+        area.querySelector(`#compose-bank .compose-token[data-type="${el.dataset.type}"]`));
+      return;
+    }
     // Picking an answer (or filling the phrase) hands focus to Check, so a
     // pad plays as: choose, Check, Next.
     if ((wasOption || wasToken) && !GameEngine.state.answered && !submitEl.disabled && visible(submitEl)) setFocus(submitEl);
@@ -833,12 +862,12 @@ GameEngine.init();
     else if (!visible(current)) setFocus(nearestTo(lastRect) || defaultTarget());
     // Check's feedback box lands above the button and pushes Next off screen;
     // bring the ring back into view.
-    else if (records.some(r => fbEl.contains(r.target))) setFocus(current);
+    else if (records.some(r => fbEl.contains(r.target))) showFeedback();
   }).observe(area, { childList: true, subtree: true });
   mark();
   // The feedback's spectrogram grows the box again once it has loaded.
   area.addEventListener('load', e => {
-    if (navMode && e.target.tagName === 'IMG' && fbEl.contains(e.target) && visible(current)) setFocus(current);
+    if (navMode && e.target.tagName === 'IMG' && fbEl.contains(e.target)) showFeedback();
   }, true);
 
   // Off the console, the arrows and Space scroll the page as usual until the
@@ -853,11 +882,11 @@ GameEngine.init();
   const engaged = t => ON_CONSOLE || (!outside(t) && (navMode || (!pointerFocus && t && t !== document.body && t !== document.documentElement && area.contains(t))));
 
   // The xbox50 shell sends one keydown per stick push and never repeats it,
-  // and a diagonal push arrives as two arrows in the same frame. Gather the
-  // arrows for a moment, take one step (up/down wins a diagonal: the game's
-  // lists run down the page), then repeat it while the stick stays held,
-  // like the website's own gamepad poll.
-  const COMBINE_MS = 30, REPEAT_DELAY = 400, REPEAT_RATE = 150;
+  // and a diagonal push arrives as two arrows, in the same frame or a few
+  // frames apart. Gather the arrows for ~5 frames, take one step (up/down
+  // wins a diagonal: the game's lists run down the page), then repeat it
+  // while the stick stays held, like the website's own gamepad poll.
+  const COMBINE_MS = 80, REPEAT_DELAY = 400, REPEAT_RATE = 150;
   const shellHeld = new Set();
   let batch = null, batchTimer = 0, repeatKey = null, repeatTimer = 0;
   function stopRepeat() { clearTimeout(repeatTimer); repeatKey = null; }
@@ -1006,7 +1035,9 @@ GameEngine.init();
   });
   area.addEventListener('focusin', e => {
     const el = e.target.closest && e.target.closest(NAV);
-    if (!el) return;
+    // Focus on something we do not steer (the intro's Methodology link) has
+    // its own outline: drop ours, so there is only ever one ring.
+    if (!el) { if (current && e.target !== current) current.classList.remove('pad-focus'); return; }
     if (el !== current) { if (current) current.classList.remove('pad-focus'); current = el; lastRect = el.getBoundingClientRect(); }
     if (navMode) el.classList.add('pad-focus');
   });

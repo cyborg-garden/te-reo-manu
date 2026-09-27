@@ -35,8 +35,8 @@ then open http://localhost:8000/. Progress is saved in the browser
   off a Waiata phrase (only while the ring is in the phrase area, never from
   the level row); with nothing to take off it stays put, and on other screens
   it jumps to the level row. Holding Backspace down takes off one token, not
-  the whole phrase. Tab skips locked levels, and choosing a locked
-  level does nothing.
+  the whole phrase. Tab skips locked levels, and choosing a locked level
+  does nothing.
 - **Leaving a level partway through** (keys or pad) — Up from a question lands
   on the level you are playing, and choosing it takes you back to your
   question. Choosing any other level first shows a warning; choose it again
@@ -48,9 +48,9 @@ then open http://localhost:8000/. Progress is saved in the browser
   again, choose Retry.
 - **Gamepad (website)** — d-pad or left stick moves (hold to repeat), A
   chooses, B goes back (same as Backspace). A diagonal is one step: the
-  stick counts only the way it leans most, and on the d-pad up/down wins. The pad only steers while the
-  game's page has focus: where the game is embedded in another page, click
-  into it first.
+  stick counts only the way it leans most, and on the d-pad up/down wins.
+  The pad only steers while the game's page has focus: where the game is
+  embedded in another page, click into it first.
 - **xbox50 console** (`/cart/…`) — the game does not read the gamepad for
   input; the console shell turns the stick into arrow keys and the button
   into keys. A tap of either button (A and B both count, so the one-button
