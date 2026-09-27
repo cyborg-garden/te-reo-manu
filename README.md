@@ -34,26 +34,36 @@ then open http://localhost:8000/. Progress is saved in the browser
   Check, so it plays as choose, Enter, Enter. Backspace takes the last token
   off a Waiata phrase (only while the ring is in the phrase area, never from
   the level row); with nothing to take off it stays put, and on other screens
-  it jumps to the level row.
+  it jumps to the level row. Tab skips locked levels, and choosing a locked
+  level does nothing.
 - **Leaving a level partway through** (keys or pad) — Up from a question lands
   on the level you are playing, and choosing it takes you back to your
   question. Choosing any other level first shows a warning; choose it again
   (after a moment, so a double tap does not count) to leave and lose your
-  answers, or move away to stay. After the last level's results the ring
-  rests on the result itself, so a stray choose does not restart it.
+  answers. Back, or moving away (arrows or Tab), cancels the warning.
+- **Results screen** (keys or pad) — the ring starts on "Level n →" (after the
+  last level, on the result itself). Back then choose does not restart the
+  level you just finished; it puts the ring back where it started. To play it
+  again, choose Retry.
 - **Gamepad (website)** — d-pad or left stick moves (hold to repeat), A
-  chooses, B goes back (same as Backspace).
-- **xbox50 console** (`/cart/…`) — the game does not read the gamepad
-  itself; the console shell turns the stick into arrow keys and the button
+  chooses, B goes back (same as Backspace). The pad only steers while the
+  game's page has focus: where the game is embedded in another page, click
+  into it first.
+- **xbox50 console** (`/cart/…`) — the game does not read the gamepad for
+  input; the console shell turns the stick into arrow keys and the button
   into keys. A tap of either button (A and B both count, so the one-button
   homebrew stick works) chooses; a hold of about half a second is back; a
-  hold of 2.5 s leaves the game. Holding the stick repeats the move, and a
-  diagonal push is one step (up/down wins).
+  hold of 2.5 s leaves the game. Holding the stick repeats the move, a
+  diagonal push is one step (up/down wins), and even a quick flick moves.
+  If the press that picked the game in the console's menu is still held
+  while it loads, its release is ignored, so it cannot start a level or jump
+  to the level row by itself.
 - On the website the arrows and Space scroll the page as usual until you
   engage the game with the keyboard: press Enter (the ring appears on Begin,
   or on the current question), or Tab into it. Clicking with the mouse does
-  not take over the arrows or Space. Once you are steering, the arrows belong
-  to the game.
+  not take over the arrows, but Space still presses a button you just
+  clicked (Check or Next, Play), as it does on any page. Once you are
+  steering, the arrows belong to the game.
 
 ## Files
 

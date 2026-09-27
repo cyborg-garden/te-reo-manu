@@ -603,7 +603,13 @@ GameEngine.init();
 
   const mark = () => area.querySelectorAll(SEL).forEach(el => {
     if (!el.hasAttribute('tabindex')) { el.setAttribute('tabindex', '0'); el.setAttribute('role', 'button'); }
-    if (el.classList.contains('game-level-btn')) el.setAttribute('aria-disabled', el.classList.contains('locked') ? 'true' : 'false');
+    if (el.classList.contains('game-level-btn')) {
+      // Locked levels stay out of the Tab order (as before this navigation
+      // existed), and are announced as unavailable.
+      const locked = el.classList.contains('locked');
+      el.setAttribute('aria-disabled', locked ? 'true' : 'false');
+      el.setAttribute('tabindex', locked ? '-1' : '0');
+    }
   });
 
   const usable = el => el && el.isConnected && area.contains(el) &&
@@ -716,6 +722,7 @@ GameEngine.init();
     return true;
   }
 
+  const onResult = () => scoreEl.style.display !== 'none' && !!scoreEl.innerHTML.trim();
   // A level is being played (not finished, not on its result screen).
   function midLevel() {
     const st = GameEngine.state;
@@ -747,8 +754,17 @@ GameEngine.init();
 
   function activate() {
     navMode = true;
+    // A locked level does nothing, and focus stays on it rather than jumping
+    // somewhere the player did not ask to go.
+    if (current && current.isConnected && current.classList.contains('game-level-btn') && current.classList.contains('locked')) return;
     const el = visible(current) ? current : null;
     if (!el) { setFocus(defaultTarget()); return; }
+    // On a result screen the active level is the one just finished. Choosing
+    // it by key or pad (after Back) must not quietly start it again: go back
+    // to the result's own buttons, where Retry says what it does.
+    if (el.classList.contains('game-level-btn') && el.classList.contains('active') && onResult()) {
+      setFocus(defaultTarget()); return;
+    }
     if (el.classList.contains('game-level-btn') && midLevel()) {
       // Choosing the level already being played would restart it and throw
       // away the answers so far. From keys or a pad that is almost always
@@ -777,7 +793,12 @@ GameEngine.init();
     const st = GameEngine.state;
     // Already on the level row: nothing further back, and in Waiata a token
     // the player cannot see must not come off.
-    if (visible(current) && current.classList.contains('game-level-btn')) { setFocus(current); return; }
+    if (visible(current) && current.classList.contains('game-level-btn')) {
+      // Back is the natural "no" to the leave-level warning: cancel it and
+      // return to the question, so the next choose cannot leave the level.
+      if (armed) { disarm(); setFocus(defaultTarget()); return; }
+      setFocus(current); return;
+    }
     const bank = area.querySelector('#compose-bank');
     if (bank && !st.answered && !st.composing.length && visible(bank.querySelector('.compose-token'))) {
       // An empty phrase has nothing to take off: stay in the bank.
@@ -841,12 +862,15 @@ GameEngine.init();
     batch.push(key);
   }
   function flushBatch() {
-    const keys = batch.filter(k => shellHeld.has(k));
+    // Every push in the window counts, even a one-frame flick that was
+    // already released; only a key still held goes on to repeat.
+    const keys = batch;
     batch = null;
     if (!keys.length) return;
     const key = keys.find(k => k === 'ArrowUp' || k === 'ArrowDown') || keys[0];
     stopRepeat();
     navigate(DIRS[key]);
+    if (!shellHeld.has(key)) return;
     repeatKey = key;
     const again = delay => { repeatTimer = setTimeout(() => {
       if (repeatKey !== key || !shellHeld.has(key) || document.hidden) return stopRepeat();
@@ -858,9 +882,35 @@ GameEngine.init();
   window.addEventListener('blur', releaseShell);
   document.addEventListener('visibilitychange', () => { if (document.hidden) releaseShell(); });
 
+  // The xbox50 shell sends a button's key when the button comes up. The
+  // press that picked this game in the console's chooser can still be down
+  // while the game loads, and its release would arrive here as a choose
+  // (or, held longer, a back) the player never meant. Watch the pad from
+  // load: if a button is already down, ignore the shell's choose/back until
+  // just after it comes up. If the pad is not visible to this page, fall
+  // back to ignoring them for the first moments after load.
+  const SHELL_SETTLE_MS = 1200;
+  let pickHeld = ON_CONSOLE ? null : false;   // null: not known yet
+  let pickUntil = 0;
+  function watchPick() {
+    const now = performance.now();
+    let pads = [];
+    try { pads = Array.from(navigator.getGamepads ? navigator.getGamepads() : []).filter(Boolean); } catch (e) {}
+    const down = pads.some(p => p.buttons.some(b => b && b.pressed));
+    if (pads.length && pickHeld === null) pickHeld = down;
+    else if (pickHeld && !down) { pickHeld = false; pickUntil = now + 300; }
+    if (pickHeld === null && now > SHELL_SETTLE_MS) pickHeld = false;
+    if (now > 3500) pickHeld = false;   // past the shell's hold-to-quit anyway
+    if (pickHeld !== false) requestAnimationFrame(watchPick);
+  }
+  if (ON_CONSOLE) watchPick();
+  const pickPending = () => pickHeld !== false || performance.now() < pickUntil;
+
   window.addEventListener('keydown', e => {
     if (e.key === 'Tab') pointerFocus = false;
     if (e.altKey || e.ctrlKey || e.metaKey) return;
+    if (ON_CONSOLE && !e.isTrusted && pickPending() &&
+        (e.key === 'Enter' || e.key === ' ' || e.key === 'Backspace')) { e.preventDefault(); return; }
     const dir = DIRS[e.key];
     if (dir) {
       // Once steering, the arrows belong to the game even when there is
@@ -915,6 +965,8 @@ GameEngine.init();
     pointerFocus = true;
     if (current) current.classList.remove('pad-focus');
   }, true);
+  // Tab (or anything else) moving focus away cancels the leave warning too.
+  document.addEventListener('focusin', e => { if (armed && e.target !== armed) disarm(); });
   area.addEventListener('focusin', e => {
     const el = e.target.closest && e.target.closest(NAV);
     if (el && el !== current) { if (current) current.classList.remove('pad-focus'); current = el; lastRect = el.getBoundingClientRect(); if (navMode) el.classList.add('pad-focus'); }
@@ -942,7 +994,13 @@ GameEngine.init();
     const pads = Array.from(navigator.getGamepads()).filter(Boolean);
     if (!pads.length) { polling = false; return; }
     const now = performance.now();
-    if (!document.hidden) {
+    // Only steer while this page has focus. Embedded in an iframe (the
+    // research page), a pad press must not pull focus out of the parent
+    // page or play a game the reader cannot see; click into it first.
+    if (document.hidden || !document.hasFocus()) {
+      // Whatever is held now has to be released before it counts.
+      for (const k of ['up', 'down', 'left', 'right', 'a', 'b']) held[k] = Infinity;
+    } else {
       let up = false, down = false, left = false, right = false, a = false, b = false;
       for (const p of pads) {
         const btn = i => !!(p.buttons[i] && p.buttons[i].pressed);
