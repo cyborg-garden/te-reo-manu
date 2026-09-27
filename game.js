@@ -703,7 +703,15 @@ GameEngine.init();
     navMode = true;
     const st = GameEngine.state;
     if (area.querySelector('#compose-seq') && st.composing.length && !st.answered) {
+      const type = st.composing[st.composing.length - 1];
       GameEngine.removeToken(st.composing.length - 1);
+      // Removing disables Check (and re-renders the phrase), so focus would
+      // otherwise fall to the nearest placed token and the next A would
+      // delete a second one. Go to the bank instead.
+      const bank = area.querySelector('#compose-bank');
+      if (!(visible(current) && bank.contains(current))) {
+        setFocus(bank.querySelector(`.compose-token[data-type="${type}"]`) || bank.querySelector('.compose-token'));
+      }
       return;
     }
     const lvl = area.querySelector('.game-level-btn.active') || area.querySelector('.game-level-btn:not(.locked)');
@@ -729,10 +737,14 @@ GameEngine.init();
   }, true);
 
   // Off the console, the arrows and Space scroll the page as usual until the
-  // player has engaged the game: focus inside it, or already steering.
-  const engaged = t => ON_CONSOLE || navMode || (t && t !== document.body && t !== document.documentElement && area.contains(t));
+  // player has engaged the game: keyboard focus inside it (Tab), or already
+  // steering. Focus left behind by a mouse click does not count, so a mouse
+  // player can still scroll with the arrows after clicking an answer.
+  let pointerFocus = false;
+  const engaged = t => ON_CONSOLE || navMode || (!pointerFocus && t && t !== document.body && t !== document.documentElement && area.contains(t));
 
   window.addEventListener('keydown', e => {
+    if (e.key === 'Tab') pointerFocus = false;
     if (e.altKey || e.ctrlKey || e.metaKey) return;
     const dir = DIRS[e.key];
     if (dir) {
@@ -770,6 +782,7 @@ GameEngine.init();
 
   window.addEventListener('pointerdown', () => {
     navMode = false;
+    pointerFocus = true;
     if (current) current.classList.remove('pad-focus');
   }, true);
   area.addEventListener('focusin', e => {
