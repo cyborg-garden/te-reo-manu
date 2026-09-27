@@ -32,8 +32,8 @@ then open http://localhost:8000/. Progress is saved in the browser
 - **Keyboard** — arrow keys move the focus ring to the nearest choice in that
   direction; Enter or Space chooses. Choosing an answer moves the ring to
   Check, so it plays as choose, Enter, Enter. Backspace takes the last token
-  off a Waiata phrase (only while the ring is in the phrase area, never from
-  the level row); with nothing to take off it stays put, and on other screens
+  off a Waiata phrase (from the phrase, the bank or Check, never from the
+  level row); with nothing to take off it stays put, and on other screens
   it jumps to the level row. Holding Backspace down takes off one token, not
   the whole phrase. Tab skips locked levels, and choosing a locked level
   does nothing.

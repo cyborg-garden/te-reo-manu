@@ -659,15 +659,19 @@ GameEngine.init();
   // into view as that allows. Centring the button alone pushed a tall
   // feedback box off the top, with no way to scroll back while steering.
   function showFeedback() {
-    if (!visible(current)) return;
+    // A spectrogram can finish loading after the player has moved on and
+    // the box is hidden again; nothing to show then.
+    if (!visible(current) || !visible(fbEl)) return;
     setFocus(current);
-    const m = 80;
+    const m = 80, bottom = window.innerHeight - m;
     const fb = fbEl.getBoundingClientRect();
     const r = current.getBoundingClientRect();
     let dy = 0;
-    if (r.bottom > window.innerHeight - m) dy = r.bottom - (window.innerHeight - m);
-    dy = Math.min(dy, fb.top - 8);
-    if (fb.top < 8) dy = fb.top - 8;
+    if (r.bottom > bottom) dy = Math.min(r.bottom - bottom, fb.top - 8);
+    else if (fb.top < 8) dy = Math.max(fb.top - 8, r.bottom - bottom);
+    // On a very short screen both cannot fit: the ring wins, so the player
+    // always sees what A will press. setFocus has already centred it.
+    if (r.bottom - dy > bottom) return;
     if (dy) window.scrollBy({ top: dy, behavior: 'instant' });
   }
 
@@ -779,6 +783,10 @@ GameEngine.init();
     if (current && current.isConnected && current.classList.contains('game-level-btn') && current.classList.contains('locked')) return;
     const el = visible(current) ? current : null;
     if (!el) { setFocus(defaultTarget()); return; }
+    // Tab took keyboard focus elsewhere (a link) and the ring came off: the
+    // first A only brings the ring back, so nothing is chosen unseen. A key
+    // on the focused element itself is seen through its own outline.
+    if (!el.classList.contains('pad-focus') && document.activeElement !== el) { setFocus(el); return; }
     // On a result screen the active level is the one just finished. Choosing
     // it by key or pad (after Back) must not quietly start it again: go back
     // to the result's own buttons, where Retry says what it does.
