@@ -45,10 +45,14 @@ const GAME_DATA = {
   level_config: [
     {name:'Ko Wai?',    mi:'Who Is This?',       total:7,  pass:5,  desc:'Recognise the tūī among NZ birds'},
     {name:'Ngā Oro',    mi:'The Sounds',        total:15, pass:12, desc:'Identify the five syllable types by ear'},
-    {name:'E Whai Ake', mi:'What Comes Next?',   total:15, pass:8,  desc:'Predict tūī song transitions'},
+    {name:'E Whai Ake', mi:'What Comes Next?',   total:15, pass:11, desc:'Predict tūī song transitions'},
     {name:'Waiata',     mi:'Compose the Song',   total:6,  pass:3,  desc:'Build a plausible tūī phrase'},
     {name:'Te Rohe',    mi:'Regional Dialects',  total:8,  pass:5,  desc:'Read tūī dialect geography'}
-  ]
+  ],
+  // Each syllable sample carries this much of the surrounding song either
+  // side of the syllable itself (the spectrograms show it). Play only the
+  // syllable, so a sample is heard once and not with its neighbours.
+  sample_pad: 0.2
 };
 
 const GameEngine = {
@@ -145,36 +149,88 @@ const GameEngine = {
       }
       this.shuffle(questions);
     } else if (level === 3) {
-      // Level 3: What comes next — given a syllable, predict most likely successor
-      const types = GAME_DATA.syllable_types;
+      // Level 3: What comes next — given a syllable, which of two successors
+      // is more likely. Most likely overall is nearly always LF or a repeat,
+      // so asking for the top successor had the same answer everywhere. Each
+      // pair here has a different winner after some other syllable, so the
+      // answer depends on what the tūī just sang.
+      // Draw again until every syllable offered as a choice is wrong at least
+      // once, so "always pick LF" (or any one type) cannot win the level.
       const matrix = GAME_DATA.transition_probs.tui;
-      for (let i = 0; i < 15; i++) {
-        const from = types[i % 5];
-        questions.push({ type: 'transition', from, probs: matrix[from] });
+      const alwaysRight = qs => GAME_DATA.syllable_types.some(t =>
+        qs.some(q => q.choices.includes(t)) && qs.every(q => !q.choices.includes(t) || q.answer === t));
+      for (let tries = 0; tries < 100 && (!questions.length || alwaysRight(questions)); tries++) {
+        questions.length = 0;
+        for (const from of GAME_DATA.syllable_types) {
+          const pairs = this.contrastPairs(from, 'tui');
+          this.shuffle(pairs);
+          for (const [answer, other] of pairs.slice(0, 3)) {
+            const choices = [answer, other];
+            this.shuffle(choices);
+            questions.push({ type: 'transition', from, probs: matrix[from], answer, choices });
+          }
+        }
       }
       this.shuffle(questions);
     } else if (level === 4) {
-      // Level 4: Compose a song — arrange tokens
+      // Level 4: Compose a song — arrange tokens. Each phrase must include a
+      // given syllable and at least three types, so one syllable repeated
+      // (or one phrase reused) cannot win; see composeProblem.
+      const needs = ['H', 'HF', 'T', 'R'];
+      this.shuffle(needs);
       for (let i = 0; i < 6; i++) {
         const len = 5 + Math.floor(Math.random() * 3); // 5-7 tokens
-        questions.push({ type: 'compose', length: len });
+        questions.push({ type: 'compose', length: len, include: needs[i % needs.length] });
       }
     } else if (level === 5) {
-      // Level 5: Regional dialects — compare two regions
-      const regionNames = Object.keys(GAME_DATA.regional_diversity);
-      const pairs = [];
+      // Level 5: Regional dialects — compare two named regions. Half the
+      // questions ask which is more diverse, half which sings more of one
+      // syllable type. The regions are listed most diverse first, so the
+      // pair order is set per question (half A, half B), and no region turns
+      // up more than twice where that can be managed.
+      const rd = GAME_DATA.regional_diversity;
+      const regionNames = Object.keys(rd);
+      const div = [], mix = [];
       for (let i = 0; i < regionNames.length; i++) {
         for (let j = i + 1; j < regionNames.length; j++) {
-          const a = GAME_DATA.regional_diversity[regionNames[i]];
-          const b = GAME_DATA.regional_diversity[regionNames[j]];
-          if (Math.abs(a.H - b.H) > 0.15) pairs.push([regionNames[i], regionNames[j]]);
+          const a = rd[regionNames[i]], b = rd[regionNames[j]];
+          const pair = [regionNames[i], regionNames[j]];
+          if (Math.abs(a.H - b.H) > 0.15) div.push({ type: 'dialect', ask: 'H', regions: pair });
+          for (const t of GAME_DATA.syllable_types) {
+            const hi = Math.max(a.type_pcts[t], b.type_pcts[t]), lo = Math.min(a.type_pcts[t], b.type_pcts[t]);
+            if (hi - lo >= 5 && hi >= lo * 1.5) mix.push({ type: 'dialect', ask: t, regions: pair });
+          }
         }
       }
-      this.shuffle(pairs);
-      for (let i = 0; i < Math.min(8, pairs.length); i++) {
-        const [r1, r2] = pairs[i];
-        questions.push({ type: 'dialect', regions: [r1, r2] });
+      let picked = [];
+      for (let tries = 0; tries < 400 && picked.length < 8; tries++) {
+        const cap = tries < 200 ? 2 : 3;
+        const uses = {}, asked = new Set();
+        picked = [];
+        this.shuffle(div); this.shuffle(mix);
+        const take = (pool, n) => {
+          let got = 0;
+          for (const q of pool) {
+            if (got >= n) break;
+            if (q.regions.some(r => (uses[r] || 0) >= cap)) continue;
+            if (q.ask !== 'H' && asked.has(q.ask)) continue;   // one question per syllable type
+            q.regions.forEach(r => { uses[r] = (uses[r] || 0) + 1; });
+            asked.add(q.ask);
+            picked.push(q);
+            got++;
+          }
+        };
+        take(div, 4);
+        take(mix, 4);
       }
+      const winnerFirst = picked.map((_, i) => i % 2 === 0);
+      this.shuffle(winnerFirst);
+      picked.forEach((q, i) => {
+        const win = this.dialectAnswer(q);
+        const lose = q.regions[0] === win ? q.regions[1] : q.regions[0];
+        questions.push({ type: 'dialect', ask: q.ask, regions: winnerFirst[i] ? [win, lose] : [lose, win] });
+      });
+      this.shuffle(questions);
     }
     return questions;
   },
@@ -217,7 +273,7 @@ const GameEngine = {
   renderIdentify(q) {
     document.getElementById('q-text').textContent = 'What type of syllable is this?';
     document.getElementById('q-context').textContent = 'Listen to the sample, then choose the syllable type.';
-    document.getElementById('q-audio').innerHTML = `<button class="game-play-btn" onclick="GameEngine.playAudio('${q.audio}',this)"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg> Play</button>`;
+    document.getElementById('q-audio').innerHTML = `<button class="game-play-btn" onclick="GameEngine.playAudio('${q.audio}',this,GAME_DATA.sample_pad)"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg> Play</button>`;
     this.renderOptions(GAME_DATA.syllable_types.map(t => ({
       value: t,
       label: `${GAME_DATA.syllable_names[t].en} (${GAME_DATA.syllable_names[t].mi})`
@@ -244,20 +300,20 @@ const GameEngine = {
 
   renderTransition(q) {
     const fromName = GAME_DATA.syllable_names[q.from];
-    document.getElementById('q-text').innerHTML = `A tūī just sang a <span style="color:${GAME_DATA.syllable_colors[q.from]};font-weight:600">${fromName.en}</span> syllable. What comes next?`;
-    document.getElementById('q-context').textContent = 'Pick the most likely successor based on tūī grammar rules.';
+    document.getElementById('q-text').innerHTML = `A tūī just sang a <span style="color:${GAME_DATA.syllable_colors[q.from]};font-weight:600">${fromName.en}</span> syllable. Which is it more likely to sing next?`;
+    document.getElementById('q-context').textContent = 'What a tūī sings next depends on what it just sang. Pick the likelier of the two.';
     // Play an example of the "from" type
     const key = GAME_DATA.sample_keys[q.from];
-    document.getElementById('q-audio').innerHTML = `<button class="game-play-btn" onclick="GameEngine.playAudio('samples/${key}_0.wav',this)"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg> Hear ${fromName.en}</button>`;
-    this.renderOptions(GAME_DATA.syllable_types.map(t => ({
+    document.getElementById('q-audio').innerHTML = `<button class="game-play-btn" onclick="GameEngine.playAudio('samples/${key}_0.wav',this,GAME_DATA.sample_pad)"><svg viewBox="0 0 24 24"><path d="M8 5v14l11-7z"/></svg> Hear ${fromName.en}</button>`;
+    this.renderOptions(q.choices.map(t => ({
       value: t,
       label: `${GAME_DATA.syllable_names[t].en} (${(q.probs[t] * 100).toFixed(0)}% chance)`
     })), true);  // hideProbs=true until answered
   },
 
   renderCompose(q) {
-    document.getElementById('q-text').textContent = `Compose a ${q.length}-syllable tūī phrase`;
-    document.getElementById('q-context').textContent = 'Click syllable tokens to build a sequence. The more natural it sounds to a tūī, the higher your score. Click a placed token to remove it.';
+    document.getElementById('q-text').textContent = `Compose a ${q.length}-syllable tūī phrase with a ${GAME_DATA.syllable_names[q.include].en} in it`;
+    document.getElementById('q-context').textContent = 'Use at least three different syllable types, no more than three of one in a row, and a new phrase each time. The more natural the order is to a tūī, the higher your score. Click a placed token to remove it.';
     document.getElementById('q-audio').innerHTML = '';
     document.getElementById('game-options').style.display = 'block';
     document.getElementById('game-options').innerHTML = `
@@ -273,8 +329,13 @@ const GameEngine = {
     const [r1, r2] = q.regions;
     const d1 = GAME_DATA.regional_diversity[r1];
     const d2 = GAME_DATA.regional_diversity[r2];
-    document.getElementById('q-text').textContent = 'Which region has more diverse tūī song?';
-    document.getElementById('q-context').innerHTML = 'Compare the syllable distribution between two regions. Higher diversity = more even mix of syllable types.';
+    const askName = q.ask === 'H' ? null : GAME_DATA.syllable_names[q.ask];
+    document.getElementById('q-text').textContent = askName
+      ? `Which region's tūī sing more ${askName.en} (${askName.mi}) syllables?`
+      : 'Which region has more diverse tūī song?';
+    document.getElementById('q-context').innerHTML = askName
+      ? 'Each bar is one region\'s mix of syllable types. Tūī song differs from region to region.'
+      : 'Compare the syllable distribution between two regions. Higher diversity = more even mix of syllable types.';
     document.getElementById('q-audio').innerHTML = '';
 
     // Show mini distribution bars for both regions
@@ -290,9 +351,9 @@ const GameEngine = {
 
     document.getElementById('game-options').style.display = 'block';
     document.getElementById('game-options').innerHTML = `
-      <div style="margin-bottom:1rem">${barHtml('Region A', d1)}${barHtml('Region B', d2)}</div>
-      <div class="game-option" onclick="GameEngine.selectOpt(this,this.dataset.value)" data-value="${r1.replace(/"/g,'&quot;')}"><span class="opt-dot"></span> Region A is more diverse</div>
-      <div class="game-option" onclick="GameEngine.selectOpt(this,this.dataset.value)" data-value="${r2.replace(/"/g,'&quot;')}"><span class="opt-dot"></span> Region B is more diverse</div>`;
+      <div style="margin-bottom:1rem">${barHtml(r1, d1)}${barHtml(r2, d2)}</div>
+      <div class="game-option" onclick="GameEngine.selectOpt(this,this.dataset.value)" data-value="${r1.replace(/"/g,'&quot;')}"><span class="opt-dot"></span> ${r1}</div>
+      <div class="game-option" onclick="GameEngine.selectOpt(this,this.dataset.value)" data-value="${r2.replace(/"/g,'&quot;')}"><span class="opt-dot"></span> ${r2}</div>`;
     document.getElementById('game-submit').disabled = true;
   },
 
@@ -341,23 +402,54 @@ const GameEngine = {
     if (countEl) countEl.textContent = `${this.state.composing.length} / ${q.length} syllables`;
   },
 
-  playAudio(src, btn) {
+  // pad (seconds): skip that much at each end and play only the middle, so a
+  // syllable sample is heard once, without the song around it.
+  playAudio(src, btn, pad) {
     // Remember each button's resting label once, so a second tap mid-clip
     // does not save "Playing…" as the label to come back to.
     if (!btn.dataset.label) btn.dataset.label = btn.innerHTML;
-    if (this._audio) { this._audio.pause(); this._audio = null; }
+    if (this._audio) { this._audio.stop(); this._audio = null; }
     if (this._audioBtn && this._audioBtn.dataset.label) this._audioBtn.innerHTML = this._audioBtn.dataset.label;
-    const audio = new Audio(src);
-    this._audio = audio;
+    const player = { stopped: false, stop() { this.stopped = true; if (this.node) this.node(); } };
+    this._audio = player;
     this._audioBtn = btn;
     const origHTML = btn.dataset.label;
     btn.innerHTML = origHTML.replace('Play', 'Playing…').replace('Hear ', 'Playing ');
     // Only the clip still playing may put its label back; a superseded clip
-    // (paused above) would otherwise reset the newer one's "Playing…".
-    const done = () => { if (this._audio !== audio) return; btn.innerHTML = origHTML; this._audio = null; this._audioBtn = null; };
-    audio.addEventListener('ended', done);
-    audio.addEventListener('error', done);
-    audio.play().catch(done);
+    // (stopped above) would otherwise reset the newer one's "Playing…".
+    const done = () => { if (this._audio !== player) return; btn.innerHTML = origHTML; this._audio = null; this._audioBtn = null; };
+    const whole = () => {
+      if (player.stopped) return;
+      const audio = new Audio(src);
+      player.node = () => audio.pause();
+      audio.addEventListener('ended', done);
+      audio.addEventListener('error', done);
+      audio.play().catch(done);
+    };
+    const Ctx = window.AudioContext || window.webkitAudioContext;
+    if (!pad || !Ctx) { whole(); return; }
+    // Web Audio cuts to the millisecond; an <audio> element's end time is
+    // too coarse for a 60 ms syllable. If it fails, play the whole sample.
+    const ctx = this._ctx || (this._ctx = new Ctx());
+    if (ctx.state === 'suspended') ctx.resume();   // inside the tap, or it stays muted
+    this._buffers = this._buffers || {};
+    const load = this._buffers[src] || (this._buffers[src] = fetch(src)
+      .then(r => { if (!r.ok) throw new Error(r.status); return r.arrayBuffer(); })
+      .then(b => new Promise((ok, fail) => ctx.decodeAudioData(b, ok, fail))));
+    load.then(buf => {
+      if (player.stopped) return;
+      const len = Math.max(0.01, buf.duration - 2 * pad), t = ctx.currentTime, fade = 0.003;
+      const node = ctx.createBufferSource(), gain = ctx.createGain();
+      node.buffer = buf;
+      gain.gain.setValueAtTime(0, t);
+      gain.gain.linearRampToValueAtTime(1, t + fade);
+      gain.gain.setValueAtTime(1, t + len - fade);
+      gain.gain.linearRampToValueAtTime(0, t + len);
+      node.connect(gain); gain.connect(ctx.destination);
+      node.onended = done;
+      player.node = () => { try { node.stop(); } catch (e) {} };
+      node.start(t, pad, len);
+    }).catch(() => { delete this._buffers[src]; whole(); });
   },
 
   // ---- Submit answer ----
@@ -384,7 +476,7 @@ const GameEngine = {
         : `That was ${name.en} (${name.mi}). ${name.desc}`;
       if (correct && firstTry) this.state.score++;
       // Show spectrogram
-      feedbackText += `<div style="margin-top:.8rem"><img src="${q.spectrogram}" alt="Spectrogram" style="max-width:100%;border-radius:4px;border:1px solid var(--rule)"></div>`;
+      feedbackText += `<div style="margin-top:.8rem"><img src="${q.spectrogram}" alt="Spectrogram" style="max-width:100%;border-radius:4px;border:1px solid var(--rule)"><div style="font-family:var(--mono);font-size:.68rem;color:var(--ink-faint)">The syllable you heard starts at 0.2 s; either side is the song around it.</div></div>`;
     } else if (q.type === 'species') {
       correct = this.state.selected === q.species;
       const names = { tui: 'Tūī', bellbird: 'Korimako', kaka: 'Kākā', kea: 'Kea', morepork: 'Morepork (Ruru)', fantail: 'Fantail (Pīwakawaka)', warbler: 'Grey Warbler (Riroriro)' };
@@ -394,18 +486,16 @@ const GameEngine = {
       if (correct && firstTry) this.state.score++;
     } else if (q.type === 'transition') {
       const sorted = Object.entries(q.probs).sort((a, b) => b[1] - a[1]);
-      const bestAnswer = sorted[0][0];
-      correct = this.state.selected === bestAnswer;
-      const selectedProb = q.probs[this.state.selected] || 0;
-      const bestProb = sorted[0][1];
-      // Weighted scoring: best=3, second=1, else=0
-      if (firstTry) {
-        if (this.state.selected === sorted[0][0]) this.state.score += 3;
-        else if (this.state.selected === sorted[1][0]) this.state.score += 1;
-      }
-      feedbackText = correct
-        ? `Correct! ${GAME_DATA.syllable_names[bestAnswer].en} follows with ${(bestProb * 100).toFixed(0)}% probability.`
-        : `The most likely next syllable is ${GAME_DATA.syllable_names[bestAnswer].en} (${(bestProb * 100).toFixed(0)}%). You picked ${GAME_DATA.syllable_names[this.state.selected].en} (${(selectedProb * 100).toFixed(0)}%).`;
+      const other = q.choices.find(t => t !== q.answer);
+      const fromEn = GAME_DATA.syllable_names[q.from].en;
+      const pc = t => `${GAME_DATA.syllable_names[t].en} (${(q.probs[t] * 100).toFixed(0)}%)`;
+      correct = this.state.selected === q.answer;
+      if (correct && firstTry) this.state.score++;
+      // Name a syllable after which the other one wins, so the point lands:
+      // the answer depends on what came before.
+      const flip = GAME_DATA.syllable_types.find(f => f !== q.from && this.contrastWins(f, other, q.answer, 'tui'));
+      feedbackText = (correct ? 'Correct! ' : '') + `After a ${fromEn}, ${pc(q.answer)} is more likely than ${pc(other)}.` +
+        (flip ? ` After a ${GAME_DATA.syllable_names[flip].en} it is the other way round.` : '');
       // Show full probability bar
       feedbackText += '<div style="margin-top:.6rem;display:flex;border-radius:4px;overflow:hidden;height:22px">';
       for (const [t, p] of sorted) {
@@ -420,27 +510,35 @@ const GameEngine = {
         o.innerHTML = `<span class="opt-dot"></span> ${nameObj.en} (${(prob*100).toFixed(0)}% chance)`;
       });
     } else if (q.type === 'compose') {
-      const prob = this.sequenceProbability(this.state.composing, 'tui');
-      // Score against random baseline (0.2 for each of 5 types)
-      const randomBaseline = Math.pow(0.2, this.state.composing.length - 1);
-      correct = prob > randomBaseline * 3;
-      const pct = Math.min(100, (prob / (randomBaseline * 10)) * 100);
+      const seq = this.state.composing;
+      const used = this.state.usedPhrases || (this.state.usedPhrases = []);
+      const problem = this.composeProblem(seq, q, used);
+      const ranked = this.composeRank(q, 'tui');
+      const pct = problem ? 0 : this.composeScore(seq, ranked, 'tui') * 100;
+      correct = !problem && pct >= this.COMPOSE_PASS * 100;
+      if (correct) used.push(seq.join('-'));
       if (correct && firstTry) this.state.score++;
-      feedbackText = correct
-        ? `Nice phrase! Naturalness score: ${pct.toFixed(0)}%. A tūī would find this plausible.`
-        : `This sequence is quite unlikely for a tūī. Naturalness: ${pct.toFixed(0)}%. Tip: tūī songs are dominated by low-frequency runs (LF→LF has 73.3% probability).`;
+      // Suggest one not already sung, or the hint could not be used.
+      const best = (ranked.top.find(t => !used.includes(t.seq.join('-'))) || ranked.top[0]).seq.join(' → ');
+      feedbackText = problem ? problem
+        : correct
+          ? `Nice phrase! Naturalness score: ${pct.toFixed(0)}%. A tūī would find this plausible.`
+          : `This order is quite unlikely for a tūī. Naturalness: ${pct.toFixed(0)}% (you need ${(this.COMPOSE_PASS * 100).toFixed(0)}%).`;
+      if (!correct) feedbackText += ` A very tūī-like one: ${best}. Tip: tūī mostly open on Low Frequency, tend to repeat a syllable, and fall back to Low Frequency between changes.`;
       feedbackText += `<div class="compose-score-bar" style="margin-top:.6rem"><div class="compose-score-fill" style="width:${pct}%;background:${correct?'var(--pos)':'var(--neg)'}"></div></div>`;
     } else if (q.type === 'dialect') {
-      const [r1, r2] = q.regions;
-      const d1 = GAME_DATA.regional_diversity[r1];
-      const d2 = GAME_DATA.regional_diversity[r2];
-      const moreDiv = d1.H >= d2.H ? r1 : r2;
+      const rd = GAME_DATA.regional_diversity;
+      const moreDiv = this.dialectAnswer(q);
       correct = this.state.selected === moreDiv;
       if (correct && firstTry) this.state.score++;
-      feedbackText = correct
+      if (q.ask !== 'H') {
+        const less = q.regions.find(r => r !== moreDiv);
+        const en = GAME_DATA.syllable_names[q.ask].en;
+        feedbackText = `${correct ? 'Correct! ' : ''}${moreDiv}'s tūī: ${rd[moreDiv].type_pcts[q.ask]}% ${en}, against ${rd[less].type_pcts[q.ask]}% in ${less}. Tūī song differs from region to region.`;
+      } else feedbackText = correct
         ? `Correct! ${moreDiv} has Shannon diversity H = ${GAME_DATA.regional_diversity[moreDiv].H.toFixed(2)}, meaning a more even mix of syllable types.`
         : `Actually, ${moreDiv} is more diverse (H = ${GAME_DATA.regional_diversity[moreDiv].H.toFixed(2)}) vs ${this.state.selected} (H = ${GAME_DATA.regional_diversity[this.state.selected].H.toFixed(2)}).`;
-      feedbackText += ` The Shannon diversity index measures how evenly syllable types are distributed — higher means more variety.`;
+      if (q.ask === 'H') feedbackText += ` The Shannon diversity index measures how evenly syllable types are distributed — higher means more variety.`;
     }
 
     // Highlight correct/wrong options
@@ -451,9 +549,8 @@ const GameEngine = {
         const answer = q.type === 'identify' ? q.answer : q.species;
         if (o.dataset.value === answer) o.classList.add('correct');
         else if (o.classList.contains('selected')) o.classList.add('wrong');
-      } else if (q.type === 'dialect') {
-        const [r1, r2] = q.regions;
-        const moreDiv = GAME_DATA.regional_diversity[r1].H >= GAME_DATA.regional_diversity[r2].H ? r1 : r2;
+      } else if (q.type === 'dialect' || q.type === 'transition') {
+        const moreDiv = q.type === 'dialect' ? this.dialectAnswer(q) : q.answer;
         if (o.dataset.value === moreDiv) o.classList.add('correct');
         else if (o.classList.contains('selected')) o.classList.add('wrong');
       }
@@ -497,6 +594,86 @@ const GameEngine = {
     return prob;
   },
 
+  // A transition "wins" when it is clearly (1.4x) the likelier of the two.
+  contrastWins(from, a, b, species) {
+    const row = GAME_DATA.transition_probs[species][from];
+    return row[a] >= row[b] * 1.4;
+  },
+
+  // Level 3 pairs for one syllable: [likelier, other], kept only when some
+  // other syllable reverses the order, so no fixed answer works everywhere.
+  contrastPairs(from, species) {
+    const types = GAME_DATA.syllable_types, pairs = [];
+    for (let i = 0; i < types.length; i++) {
+      for (let j = i + 1; j < types.length; j++) {
+        const a = types[i], b = types[j];
+        const pair = this.contrastWins(from, a, b, species) ? [a, b] : this.contrastWins(from, b, a, species) ? [b, a] : null;
+        if (pair && types.some(f => f !== from && this.contrastWins(f, pair[1], pair[0], species))) pairs.push(pair);
+      }
+    }
+    return pairs;
+  },
+
+  // How likely a tūī is to sing this whole phrase: its opening syllable,
+  // then each transition. Without the opening, a phrase could start on a
+  // rare syllable for free.
+  phraseProbability(seq, species) {
+    return (GAME_DATA.opening_prefs[species][seq[0]] || 0.01) * this.sequenceProbability(seq, species);
+  },
+
+  // Level 4 naturalness: 1 for the likeliest phrase that fits the rules,
+  // 0.5 for one a tenth as likely (the pass mark), 0 at a hundredth.
+  COMPOSE_PASS: 0.5,
+
+  // Level 4 rules: why a phrase cannot score, or null. Without them one
+  // syllable repeated (LF→LF is 73%) beat every real phrase.
+  composeProblem(seq, q, used) {
+    const name = t => GAME_DATA.syllable_names[t].en;
+    if (new Set(seq).size < 3) return 'Use at least three different syllable types: a tūī phrase is more than one sound repeated.';
+    for (let i = 3; i < seq.length; i++) {
+      if (seq[i] === seq[i - 1] && seq[i] === seq[i - 2] && seq[i] === seq[i - 3]) return `No more than three ${name(seq[i])} syllables in a row.`;
+    }
+    if (q.include && !seq.includes(q.include)) return `This phrase needs a ${name(q.include)} in it.`;
+    if (used && used.includes(seq.join('-'))) return 'You have already sung that phrase in this level. Compose a new one.';
+    return null;
+  },
+
+  // The likeliest phrases of this length that fit the rules, best first.
+  // 5^7 phrases at most, worked out once per question.
+  composeRank(q, species) {
+    if (q._ranked) return q._ranked;
+    const types = GAME_DATA.syllable_types, top = [];
+    const seq = [];
+    const walk = () => {
+      if (seq.length === q.length) {
+        if (this.composeProblem(seq, q)) return;
+        const p = this.phraseProbability(seq, species);
+        if (top.length < 8 || p > top[top.length - 1].p) {
+          top.push({ p, seq: seq.slice() });
+          top.sort((a, b) => b.p - a.p);
+          if (top.length > 8) top.pop();
+        }
+        return;
+      }
+      for (const t of types) { seq.push(t); walk(); seq.pop(); }
+    };
+    walk();
+    q._ranked = { top, best: top[0].seq, bestP: top[0].p };
+    return q._ranked;
+  },
+
+  composeScore(seq, ranked, species) {
+    const ratio = this.phraseProbability(seq, species) / ranked.bestP;
+    return Math.max(0, Math.min(1, 1 + Math.log10(ratio) / 2 + 1e-9));
+  },
+
+  // Level 5: the region with more diversity (ask 'H') or more of one type.
+  dialectAnswer(q) {
+    const [r1, r2] = q.regions, rd = GAME_DATA.regional_diversity;
+    const v = r => q.ask && q.ask !== 'H' ? rd[r].type_pcts[q.ask] : rd[r].H;
+    return v(r1) >= v(r2) ? r1 : r2;
+  },
+
   scoreSequence(seq, species) {
     return this.sequenceProbability(seq, species);
   },
@@ -515,11 +692,6 @@ const GameEngine = {
     const total = config.total;
     let displayScore = this.state.score;
     let displayTotal = total;
-
-    // Level 3 has weighted scoring
-    if (this.state.level === 3) {
-      displayTotal = total * 3;
-    }
 
     const stars = this.calculateStars(displayScore, displayTotal);
     const passed = true; // everyone can pass — retry until correct
@@ -543,8 +715,8 @@ const GameEngine = {
     scoreEl.innerHTML = `
       <h3>${passed ? 'Tino pai!' : 'Kia kaha — try again!'}</h3>
       <div class="stars">${starStr}</div>
-      <div class="stat-line">${displayScore} / ${displayTotal} ${this.state.level === 3 ? 'points' : 'correct'}</div>
-      <div class="stat-line">${passed ? 'Level passed!' : `Need ${config.pass}${this.state.level === 3 ? ' pts' : ''} to pass`}</div>
+      <div class="stat-line">${displayScore} / ${displayTotal} correct</div>
+      <div class="stat-line">${passed ? 'Level passed!' : `Need ${config.pass} to pass`}</div>
       <button class="game-next-btn" onclick="GameEngine.startLevel(${this.state.level})" style="background:var(--ink-soft)">Retry Level ${this.state.level}</button>
       ${nextLevel ? `<button class="game-next-btn" onclick="GameEngine.startLevel(${nextLevel})">Level ${nextLevel} →</button>` : ''}
       ${!nextLevel && passed && this.state.level === 5 ? '<div style="margin-top:1rem;font-family:var(--display);font-size:1.1rem;color:var(--tui)">🎉 You\'ve mastered Te Reo Manu!</div>' : ''}`;

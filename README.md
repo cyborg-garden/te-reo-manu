@@ -4,10 +4,13 @@ Learn to speak the language of birds. A small five-level game built on real
 Xeno-Canto recordings of tūī and other Aotearoa birds.
 
 1. **Ko Wai?** — which bird is singing?
-2. **Ngā Oro** — the five tūī syllable types, by ear
-3. **E Whai Ake** — what does a tūī sing next?
-4. **Waiata** — compose a phrase a tūī would find plausible
-5. **Te Rohe** — read tūī dialect geography
+2. **Ngā Oro** — the five tūī syllable types, by ear (each syllable plays once)
+3. **E Whai Ake** — what does a tūī sing next? Each question offers two
+   syllables, and which is likelier depends on what was just sung
+4. **Waiata** — compose a phrase a tūī would find plausible, with a given
+   syllable, at least three types, and a new phrase each time
+5. **Te Rohe** — read tūī dialect geography: compare named regions on
+   diversity and on how much of each syllable type they sing
 
 Play it at https://cyborg.garden/games/te-reo-manu/
 
@@ -25,6 +28,13 @@ Static files, no build, no dependencies:
 
 then open http://localhost:8000/. Progress is saved in the browser
 (`localStorage`, key `reo-manu-progress`).
+
+## Tests
+
+    node --test tests/*.test.js
+
+They check the level rules (no fixed answer wins level 3, repetition cannot
+win level 4, level 5 varies its regions and answer side). No dependencies.
 
 ## Controls
 
@@ -84,7 +94,10 @@ stars reflect first tries.
 - `index.html` — page and styles
 - `game.js` — the game (levels, questions, scoring)
 - `audio/` — seven Xeno-Canto clips used in level 1
-- `samples/` — syllable excerpts (`.wav`) and their spectrograms (`.png`) for levels 2 and 3
+- `samples/` — syllable excerpts (`.wav`) and their spectrograms (`.png`) for levels 2 and 3.
+  Each excerpt has 0.2 s of the surrounding song either side; the game plays
+  only the syllable in the middle (`sample_pad` in `game.js`)
+- `tests/` — level rule tests (`node --test tests/*.test.js`)
 - `meta.json` — arcade card and publish status
 
 ## Credits
